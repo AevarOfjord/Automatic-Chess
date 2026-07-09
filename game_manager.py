@@ -1,6 +1,16 @@
-"""Compatibility entrypoint. New code should import from :mod:`chess_robot.game`."""
+"""Deprecated compatibility entrypoint. Prefer :mod:`chess_robot.game`."""
+
+from __future__ import annotations
+
+import warnings
 
 from chess_robot.game import GameManager as _GameManager
+
+warnings.warn(
+    "game_manager.GameManager is deprecated; import chess_robot.game.GameManager instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class GameManager(_GameManager):

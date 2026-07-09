@@ -1,24 +1,29 @@
 # Dual-SCARA Chess Robot
 
-Software-first build for two opposing SCARA chess robots.  The PC is the big brain: it owns the chess state, physical inventory, move planning, kinematics, validation, and recovery.  The ESP32s later become motion executors.
+Software-first build for two opposing SCARA chess robots. The PC is the big brain: it owns the chess state, physical inventory, move planning, kinematics, validation, and recovery. The ESP32s are motion executors.
 
-The physical board model is a 12 column × 8 row magnetic grid.  Each cell is 50 mm × 50 mm.  The center 8 columns are the playable chessboard, while the 2 left columns store `W1...W16` and the 2 right columns store `B1...B16`.
+Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess)
+
+The physical board model is a 12 column × 8 row magnetic grid. Each cell is 50 mm × 50 mm. The center 8 columns are the playable chessboard, while the 2 left columns store `W1...W16` and the 2 right columns store `B1...B16`.
+
+## Setup
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python setup_stockfish.py
+```
 
 ## Start with the visual simulator
 
-From this folder:
-
-```powershell
-.\venv\Scripts\python.exe visual_simulation.py
-```
-
-Or through the package CLI:
+Preferred entry point:
 
 ```powershell
 .\venv\Scripts\python.exe -m chess_robot visual
 ```
 
-By default, the visual simulator uses `stockfish.exe` from this folder.  The two sides intentionally use different strength settings so the games are useful and varied rather than two identical perfect engines.
+By default the visual simulator uses `stockfish.exe` from this folder. The two sides use different strength settings so games stay varied.
 
 Useful options:
 
@@ -38,29 +43,38 @@ Controls inside the simulator:
 - `+` / `-` changes animation speed.
 - `Esc` or `Q` exits.
 
-## What the simulator shows
+## Architecture
 
-- 400 × 400 mm board with 50 mm squares.
-- Two 300 mm + 300 mm SCARA arms.
-- Arm bases, elbow links, fixed-height tool/magnet position, and puck movement.
-- Dead-piece storage built into the extra board columns: `W1...W16` on the left and `B1...B16` on the right.
-- Real chess move decomposition: captures, normal moves, castling, en passant, promotion, and reset plans use the same planner intended for hardware.
-- Promotion uses the same physical pawn token.  The PC remembers when that pawn is acting as a queen, rook, bishop, or knight, so the physical set remains a normal 32-piece chess set.
+```
+chess_robot/
+  game.py            # game loop, Stockfish/random players, fault state
+  planning.py        # chess move → physical transfers (capture, castle, EP, promo)
+  inventory.py       # 32-token identity map + dead racks
+  trajectory.py      # puck XY paths around other pucks
+  geometry.py        # board layout + SCARA IK
+  hardware.py        # serialized dual-arm execution + keep-out park
+  transport.py       # serial / mock gateway
+  protocol.py        # JSON wire format + command journal
+  vision.py          # occupancy verification
+  visual_simulator.py
+  visual_render.py
+firmware/
+  esp32_gateway.ino
+  esp32_arm_receiver.ino
+docs/
+  hardware.md
+  fault_recovery.md
+```
+
+Promotion keeps the same physical pawn puck; `logical_type` on the token records queen/rook/bishop/knight until reset.
 
 ## Dead-piece rack rule
 
 Captured pieces are placed deterministically, never randomly.
 
-- If the White-side robot captures a piece, it fills `W1`, then `W2`, then `W3`, and so on.
-- If the Black-side robot captures a piece, it fills `B1`, then `B2`, then `B3`, and so on.
-- The PC remembers the exact physical token in every marked slot, for example `W2 = black pawn from c7`.
-- During reset, the PC uses that identity map to return every physical token to its original square.
-
-This means the physical table can be simple and repeatable: marked slots only need labels, not piece-type assignments.
-
-The simulator is intentionally top-down.  It is for validating reachability, flow, sequencing, and human understanding before designing brackets, wiring motors, or flashing ESP32s.
-
-The arm model is fixed-height: there is no Z pickup axis.  The electromagnet turns on at the puck center, carries the puck through XY lanes, and turns off at the destination.  Weak magnets in each board cell help snap the steel-insert pucks back to cell centers after release.
+- White-side robot captures fill `W1`, then `W2`, …
+- Black-side robot captures fill `B1`, then `B2`, …
+- Reset uses the identity map to return every token home.
 
 ## Non-visual software checks
 
@@ -70,4 +84,12 @@ The arm model is fixed-height: there is no Z pickup axis.  The electromagnet tur
 .\venv\Scripts\python.exe -m unittest discover -v
 ```
 
+## Hardware
+
+See [docs/hardware.md](docs/hardware.md) and [docs/fault_recovery.md](docs/fault_recovery.md).
+
 The first hardware milestone should wait until the visual simulator and planner tests are boringly reliable.
+
+## Legacy root scripts
+
+Thin compatibility wrappers (`game_manager.py`, `robot_controller.py`, `vision_validator.py`, `visual_simulation.py`) remain for older imports. Prefer `python -m chess_robot …` for new work.

@@ -53,14 +53,22 @@ def manager_from_args(args: argparse.Namespace, mock: bool) -> GameManager:
 
 
 def simulate_command(args: argparse.Namespace) -> int:
+    from .hardware import MotionFault
+
     manager = manager_from_args(args, mock=True)
     manager.initialize()
     try:
         for game_index in range(args.games):
             result = manager.play_game(vary_opening=not args.no_openings, max_plies=args.max_plies)
             print(f"Simulation game {game_index + 1}: {result} ({manager.board.ply()} plies)")
-            manager.reset_board()
+            try:
+                manager.reset_board()
+            except (MotionFault, RuntimeError) as exc:
+                print(f"Reset after game {game_index + 1} failed: {exc}")
+                return 1
             manager.game_number += 1
+            manager.faulted = False
+            manager.last_fault = ""
     finally:
         manager.close()
     return 0
@@ -115,11 +123,24 @@ def build_parser() -> argparse.ArgumentParser:
     visual_parser.add_argument("--fps", type=int, default=60)
     visual_parser.add_argument("--engine", default="stockfish.exe")
     visual_parser.add_argument("--random", action="store_true", help="use random legal moves instead of Stockfish")
-    visual_parser.add_argument("--white-elo", type=int, default=1700)
-    visual_parser.add_argument("--black-elo", type=int, default=1450)
-    visual_parser.add_argument("--white-skill", type=int, default=10)
-    visual_parser.add_argument("--black-skill", type=int, default=6)
-    visual_parser.add_argument("--move-time", type=float, default=0.08, help="Stockfish think time per move in seconds")
+    from .game import (
+        DEFAULT_BLACK_ELO,
+        DEFAULT_BLACK_SKILL,
+        DEFAULT_MOVE_TIME_S,
+        DEFAULT_WHITE_ELO,
+        DEFAULT_WHITE_SKILL,
+    )
+
+    visual_parser.add_argument("--white-elo", type=int, default=DEFAULT_WHITE_ELO)
+    visual_parser.add_argument("--black-elo", type=int, default=DEFAULT_BLACK_ELO)
+    visual_parser.add_argument("--white-skill", type=int, default=DEFAULT_WHITE_SKILL)
+    visual_parser.add_argument("--black-skill", type=int, default=DEFAULT_BLACK_SKILL)
+    visual_parser.add_argument(
+        "--move-time",
+        type=float,
+        default=DEFAULT_MOVE_TIME_S,
+        help="Stockfish think time per move in seconds",
+    )
     visual_parser.set_defaults(function=visual_command)
 
     run_parser = subparsers.add_parser("run", help="run unattended games on physical hardware")

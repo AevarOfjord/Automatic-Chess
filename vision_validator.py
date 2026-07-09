@@ -1,6 +1,16 @@
-"""Compatibility wrapper around occupancy-based board vision."""
+"""Deprecated compatibility wrapper. Prefer :mod:`chess_robot.vision`."""
+
+from __future__ import annotations
+
+import warnings
 
 from chess_robot.vision import BoardVision
+
+warnings.warn(
+    "vision_validator.VisionValidator is deprecated; use chess_robot.vision.BoardVision",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class VisionValidator(BoardVision):

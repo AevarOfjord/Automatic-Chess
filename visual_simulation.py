@@ -1,8 +1,24 @@
+"""Deprecated launcher. Prefer ``python -m chess_robot visual``."""
+
 from __future__ import annotations
 
 import argparse
+import warnings
 
+from chess_robot.game import (
+    DEFAULT_BLACK_ELO,
+    DEFAULT_BLACK_SKILL,
+    DEFAULT_MOVE_TIME_S,
+    DEFAULT_WHITE_ELO,
+    DEFAULT_WHITE_SKILL,
+)
 from chess_robot.visual_simulator import run_visual_simulator
+
+warnings.warn(
+    "visual_simulation.py is deprecated; use python -m chess_robot visual",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -14,11 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--engine", default="stockfish.exe", help="UCI engine executable")
     parser.add_argument("--random", action="store_true", help="use random legal moves instead of Stockfish")
-    parser.add_argument("--white-elo", type=int, default=1700)
-    parser.add_argument("--black-elo", type=int, default=1450)
-    parser.add_argument("--white-skill", type=int, default=10)
-    parser.add_argument("--black-skill", type=int, default=6)
-    parser.add_argument("--move-time", type=float, default=0.08, help="Stockfish think time per move in seconds")
+    parser.add_argument("--white-elo", type=int, default=DEFAULT_WHITE_ELO)
+    parser.add_argument("--black-elo", type=int, default=DEFAULT_BLACK_ELO)
+    parser.add_argument("--white-skill", type=int, default=DEFAULT_WHITE_SKILL)
+    parser.add_argument("--black-skill", type=int, default=DEFAULT_BLACK_SKILL)
+    parser.add_argument("--move-time", type=float, default=DEFAULT_MOVE_TIME_S)
     return parser
 
 

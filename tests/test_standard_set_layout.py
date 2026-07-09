@@ -115,9 +115,13 @@ class StandardSetLayoutTests(unittest.TestCase):
 
         self.assertEqual(len(plan.resulting_inventory.tokens), 32)
         self.assertEqual(plan.resulting_inventory.location_of("W_P_a2"), "board:a8")
+        token = plan.resulting_inventory.tokens["W_P_a2"]
+        self.assertEqual(token.piece_type, "P")
+        self.assertEqual(token.logical_type, "Q")
         self.assertFalse(any(transfer.reason.startswith("place promoted") for transfer in plan.transfers))
         reset = ResetPlanner().plan(plan.resulting_inventory)
         self.assertEqual(reset.resulting_inventory.location_of("W_P_a2"), board_location("a2"))
+        self.assertIsNone(reset.resulting_inventory.tokens["W_P_a2"].logical_type)
         reset.resulting_inventory.assert_matches(chess.Board())
 
     def _inventory_matching_sparse_board(self, placements: dict[str, str]) -> PhysicalInventory:

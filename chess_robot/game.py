@@ -15,6 +15,13 @@ from .inventory import PhysicalInventory
 from .planning import ChessMovePlanner, MovePlan, ResetPlanner
 from .vision import BoardVision
 
+# Shared engine defaults used by GameManager and the visual simulator.
+DEFAULT_WHITE_ELO = 1700
+DEFAULT_BLACK_ELO = 1450
+DEFAULT_WHITE_SKILL = 10
+DEFAULT_BLACK_SKILL = 6
+DEFAULT_MOVE_TIME_S = 0.08
+
 
 class Player(Protocol):
     def choose_move(self, board: chess.Board) -> chess.Move:
@@ -33,8 +40,8 @@ class EngineProfile:
 
 
 DEFAULT_PROFILES = (
-    EngineProfile("Tactician", 1850, 14, 0.18),
-    EngineProfile("Explorer", 1550, 8, 0.12),
+    EngineProfile("Stockfish White", DEFAULT_WHITE_ELO, DEFAULT_WHITE_SKILL, DEFAULT_MOVE_TIME_S),
+    EngineProfile("Stockfish Black", DEFAULT_BLACK_ELO, DEFAULT_BLACK_SKILL, DEFAULT_MOVE_TIME_S),
 )
 
 
@@ -110,9 +117,14 @@ class GameManager:
         self.faulted = False
         self.last_fault = ""
         if use_random_players:
-            self.players: tuple[Player, Player] = (RandomPlayer(seed), RandomPlayer(None if seed is None else seed + 1))
+            self.players: tuple[Player, Player] = (
+                RandomPlayer(seed),
+                RandomPlayer(None if seed is None else seed + 1),
+            )
         else:
-            self.players = tuple(StockfishPlayer(engine_path, profile) for profile in DEFAULT_PROFILES)  # type: ignore[assignment]
+            self.players = tuple(
+                StockfishPlayer(engine_path, profile) for profile in DEFAULT_PROFILES
+            )  # type: ignore[assignment]
 
     def initialize(self, home: bool = True) -> None:
         if home:
@@ -205,6 +217,11 @@ class GameManager:
         self.hardware.stop_all()
 
     def clear_fault_after_manual_inspection(self) -> None:
+        """Clear a fault only after the operator has restored a consistent board.
+
+        See ``docs/fault_recovery.md`` for the operator checklist.
+        """
+
         self.hardware.home_all()
         if not self.vision.verify_expected(self.board):
             raise RuntimeError("cannot clear fault while camera and logical board disagree")

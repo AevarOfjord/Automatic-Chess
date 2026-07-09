@@ -9,6 +9,7 @@ __pycache__/
 dist/
 build/
 *.egg
+*.pyi.bak
 
 # Virtual environments
 venv/
@@ -20,10 +21,17 @@ env/
 stockfish.exe
 stockfish
 stockfish_*
+stockfish.zip
+stockfish_dir/
 
 # Runtime / local state
 runtime_data/
 *.jsonl
+*.jsonl.*
+
+# Camera calibration artifacts
+*.npz
+camera_calibration.npz
 
 # IDE / editor
 .idea/
@@ -43,6 +51,7 @@ desktop.ini
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.tox/
 
 # Local agent tooling
 .agents/

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import chess
 
@@ -28,10 +28,22 @@ def dead_label(arm: ArmId, index: int) -> str:
 
 @dataclass(frozen=True)
 class PieceToken:
+    """One physical puck from a standard 32-piece set.
+
+    ``piece_type`` is the physical home type (always ``P`` for a pawn puck).
+    ``logical_type`` is what the PC chess state treats it as after promotion
+    (for example ``Q``).  On reset, logical type is cleared back to the home type.
+    """
+
     token_id: str
     color: ArmId
     piece_type: str
     original_square: str | None = None
+    logical_type: str | None = None
+
+    @property
+    def effective_type(self) -> str:
+        return self.logical_type or self.piece_type
 
 
 class PhysicalInventory:
@@ -72,6 +84,15 @@ class PhysicalInventory:
             raise ValueError(f"{destination} is occupied by {occupant}")
         self.locations[token_id] = destination
 
+    def set_logical_type(self, token_id: str, logical_type: str | None) -> None:
+        token = self.tokens[token_id]
+        self.tokens[token_id] = replace(token, logical_type=logical_type)
+
+    def clear_promotions(self) -> None:
+        for token_id, token in list(self.tokens.items()):
+            if token.logical_type is not None:
+                self.tokens[token_id] = replace(token, logical_type=None)
+
     def dead_rack_contents(self, arm: ArmId) -> list[str | None]:
         occupied = self.occupied
         return [occupied.get(dead_location(arm, index)) for index in range(DEAD_SLOTS_PER_ARM)]
@@ -107,10 +128,16 @@ class PhysicalInventory:
         }
 
     def assert_matches(self, board: chess.Board) -> None:
+        """Check that puck occupancy matches the logical board squares.
+
+        Piece *identity* after promotion is tracked via ``logical_type`` and
+        the PC ``chess.Board``; physical pucks never change type.
+        """
+
         expected = {chess.square_name(square) for square in board.piece_map()}
         actual = self.board_occupancy()
         if actual != expected:
             raise AssertionError(
-                f"physical inventory mismatch; missing={sorted(expected-actual)}, "
-                f"extra={sorted(actual-expected)}"
+                f"physical inventory mismatch; missing={sorted(expected - actual)}, "
+                f"extra={sorted(actual - expected)}"
             )

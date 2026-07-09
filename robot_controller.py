@@ -1,7 +1,17 @@
-"""Compatibility wrapper around the trajectory-based dual-arm controller."""
+"""Deprecated compatibility wrapper. Prefer :mod:`chess_robot.hardware`."""
+
+from __future__ import annotations
+
+import warnings
 
 from chess_robot.config import ArmId, RobotConfig
 from chess_robot.hardware import DualArmHardware
+
+warnings.warn(
+    "robot_controller.DualRobotController is deprecated; use chess_robot.hardware.DualArmHardware",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 class DualRobotController(DualArmHardware):

@@ -10,6 +10,8 @@ from typing import Any
 
 from .config import ArmId
 
+DEFAULT_JOURNAL_MAX_BYTES = 5_000_000
+
 
 class Action(str, Enum):
     HOME = "HOME"
@@ -75,6 +77,22 @@ class ArmResponse:
     detail: str = ""
     telemetry: dict[str, Any] = field(default_factory=dict)
 
+    def to_wire(self) -> bytes:
+        encoded = (
+            json.dumps(
+                {
+                    "id": self.command_id,
+                    "arm": self.arm.value,
+                    "status": self.status.value,
+                    "detail": self.detail,
+                    "telemetry": self.telemetry,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        return encoded
+
     @classmethod
     def from_wire(cls, raw: bytes | str) -> "ArmResponse":
         data = json.loads(raw)
@@ -88,11 +106,25 @@ class ArmResponse:
 
 
 class CommandJournal:
-    def __init__(self, path: Path):
+    """Append-only command log with simple size rotation."""
+
+    def __init__(self, path: Path, max_bytes: int = DEFAULT_JOURNAL_MAX_BYTES):
         self.path = path
+        self.max_bytes = max_bytes
+
+    def _rotate_if_needed(self) -> None:
+        if self.max_bytes <= 0 or not self.path.exists():
+            return
+        if self.path.stat().st_size < self.max_bytes:
+            return
+        rotated = self.path.with_name(self.path.name + ".1")
+        if rotated.exists():
+            rotated.unlink()
+        self.path.replace(rotated)
 
     def record(self, event: str, value: ArmCommand | ArmResponse) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._rotate_if_needed()
         body = asdict(value)
         for key, item in list(body.items()):
             if isinstance(item, Enum):

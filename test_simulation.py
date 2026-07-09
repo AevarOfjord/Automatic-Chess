@@ -1,18 +1,26 @@
-import time
-from game_manager import GameManager
+"""Deprecated ad-hoc script. Prefer package CLI + unittest.
 
-# Monkey-patch time.sleep to run the simulation extremely fast
-original_sleep = time.sleep
-time.sleep = lambda x: original_sleep(0.001)
+    python -m chess_robot simulate --random --games 1 --max-plies 40
+    python -m unittest discover -v
+"""
 
-def run_test():
-    print("Starting automated simulation test...")
-    manager = GameManager(use_dummy_engine=False)
-    try:
-        manager.play_game()
-        print("Simulation test completed successfully!")
-    except Exception as e:
-        print(f"Simulation failed with error: {e}")
+from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "test_simulation.py is deprecated; use python -m chess_robot simulate and unittest",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 if __name__ == "__main__":
-    run_test()
+    from chess_robot.game import GameManager
+
+    manager = GameManager(use_mock_hardware=True, use_random_players=True, seed=1)
+    manager.initialize()
+    try:
+        result = manager.play_game(vary_opening=False, max_plies=20)
+        print(f"Simulation completed: {result} ({manager.board.ply()} plies)")
+    finally:
+        manager.close()
