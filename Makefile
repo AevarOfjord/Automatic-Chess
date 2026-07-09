@@ -5,6 +5,8 @@
 #
 # Make cannot leave a venv "activated" in your interactive shell. These targets
 # call venv's python/pip directly, which is the reliable equivalent.
+#
+# Works with GnuWin32 make on Windows and GNU make on Unix.
 
 .PHONY: install run help
 
@@ -34,12 +36,10 @@ install: $(VENV_PY)
 	@echo Installing dependencies from requirements.txt ...
 	"$(VENV_PY)" -m pip install --upgrade pip
 	"$(VENV_PY)" -m pip install -r requirements.txt
-	@echo.
 	@echo Install complete.
-	@echo To activate this venv in your own terminal:
-	@echo   PowerShell:  .\\venv\\Scripts\\Activate.ps1
-	@echo   cmd.exe:     venv\\Scripts\\activate.bat
-	@echo   bash:        source venv/bin/activate
+	@echo To activate in PowerShell: .\venv\Scripts\Activate.ps1
+	@echo To activate in cmd.exe:    venv\Scripts\activate.bat
+	@echo To activate in bash:       source venv/bin/activate
 
 # Launch the visual simulator (installs first so the venv is ready).
 run: install
