@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import argparse
+import dataclasses
+from pathlib import Path
+
+from .config import RobotConfig
+from .game import GameManager
+from .geometry import unreachable, validate_layout
+from .vision import BoardVision
+from .visual_simulator import run_visual_simulator
+
+
+def reachability_command(_args: argparse.Namespace) -> int:
+    report = validate_layout(RobotConfig())
+    failures = list(unreachable(report))
+    minimum_margin = min(
+        result.singularity_margin
+        for locations in report.values()
+        for result in locations.values()
+        if result.reachable
+    )
+    print(f"Checked {sum(len(locations) for locations in report.values())} required arm locations.")
+    print(f"Minimum singularity margin: {minimum_margin:.3f}")
+    if failures:
+        for arm, name, result in failures:
+            print(f"FAIL {arm.value} {name}: {result.reason}")
+        return 1
+    print("PASS: every board, dead-piece slot, buffer, and park location is reachable.")
+    return 0
+
+
+def manager_from_args(args: argparse.Namespace, mock: bool) -> GameManager:
+    config = dataclasses.replace(
+        RobotConfig(),
+        serial_port=getattr(args, "port", "COM3"),
+    )
+    vision = BoardVision(
+        camera_index=getattr(args, "camera", 0),
+        use_mock=mock,
+    )
+    calibration = getattr(args, "calibration", None)
+    if calibration and not mock:
+        vision.load_calibration(calibration)
+    return GameManager(
+        config=config,
+        vision=vision,
+        use_mock_hardware=mock,
+        use_random_players=getattr(args, "random", False),
+        engine_path=getattr(args, "engine", "stockfish.exe"),
+        seed=getattr(args, "seed", None),
+    )
+
+
+def simulate_command(args: argparse.Namespace) -> int:
+    manager = manager_from_args(args, mock=True)
+    manager.initialize()
+    try:
+        for game_index in range(args.games):
+            result = manager.play_game(vary_opening=not args.no_openings, max_plies=args.max_plies)
+            print(f"Simulation game {game_index + 1}: {result} ({manager.board.ply()} plies)")
+            manager.reset_board()
+            manager.game_number += 1
+    finally:
+        manager.close()
+    return 0
+
+
+def run_command(args: argparse.Namespace) -> int:
+    manager = manager_from_args(args, mock=False)
+    manager.run_endless(pause_s=args.pause)
+    return 0
+
+
+def calibrate_command(args: argparse.Namespace) -> int:
+    vision = BoardVision(camera_index=args.camera, use_mock=False)
+    try:
+        print("Click board corners in this order: top-left, top-right, bottom-right, bottom-left.")
+        vision.calibrate_interactive()
+        input("Remove every piece from the board, then press Enter to capture the empty reference...")
+        vision.capture_empty_reference()
+        vision.save_calibration(args.output)
+        print(f"Saved camera calibration to {args.output}")
+    finally:
+        vision.release()
+    return 0
+
+
+def visual_command(args: argparse.Namespace) -> int:
+    run_visual_simulator(args)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Dual-SCARA chess robot controller")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    reachability_parser = subparsers.add_parser("reachability", help="validate arm geometry")
+    reachability_parser.set_defaults(function=reachability_command)
+
+    simulate_parser = subparsers.add_parser("simulate", help="run the full stack with mock hardware")
+    simulate_parser.add_argument("--games", type=int, default=1)
+    simulate_parser.add_argument("--max-plies", type=int)
+    simulate_parser.add_argument("--engine", default="stockfish.exe")
+    simulate_parser.add_argument("--random", action="store_true")
+    simulate_parser.add_argument("--seed", type=int)
+    simulate_parser.add_argument("--no-openings", action="store_true")
+    simulate_parser.set_defaults(function=simulate_command)
+
+    visual_parser = subparsers.add_parser("visual", help="open the animated dual-SCARA visual simulator")
+    visual_parser.add_argument("--seed", type=int)
+    visual_parser.add_argument("--max-plies", type=int)
+    visual_parser.add_argument("--speed", type=float, default=1.0)
+    visual_parser.add_argument("--paused", action="store_true")
+    visual_parser.add_argument("--fps", type=int, default=60)
+    visual_parser.add_argument("--engine", default="stockfish.exe")
+    visual_parser.add_argument("--random", action="store_true", help="use random legal moves instead of Stockfish")
+    visual_parser.add_argument("--white-elo", type=int, default=1700)
+    visual_parser.add_argument("--black-elo", type=int, default=1450)
+    visual_parser.add_argument("--white-skill", type=int, default=10)
+    visual_parser.add_argument("--black-skill", type=int, default=6)
+    visual_parser.add_argument("--move-time", type=float, default=0.08, help="Stockfish think time per move in seconds")
+    visual_parser.set_defaults(function=visual_command)
+
+    run_parser = subparsers.add_parser("run", help="run unattended games on physical hardware")
+    run_parser.add_argument("--port", default="COM3")
+    run_parser.add_argument("--camera", type=int, default=0)
+    run_parser.add_argument("--calibration", default="runtime_data/camera_calibration.npz")
+    run_parser.add_argument("--engine", default="stockfish.exe")
+    run_parser.add_argument("--pause", type=float, default=2.0)
+    run_parser.add_argument("--seed", type=int)
+    run_parser.set_defaults(function=run_command)
+
+    calibrate_parser = subparsers.add_parser("calibrate-camera", help="create camera calibration")
+    calibrate_parser.add_argument("--camera", type=int, default=0)
+    calibrate_parser.add_argument("--output", default="runtime_data/camera_calibration.npz")
+    calibrate_parser.set_defaults(function=calibrate_command)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    return args.function(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
