@@ -12,8 +12,12 @@ import chess.engine
 from .config import ArmId, RobotConfig
 from .hardware import DualArmHardware, MotionFault
 from .inventory import PhysicalInventory
+from .logging_config import get_logger
 from .planning import ChessMovePlanner, MovePlan, ResetPlanner
+from .trajectory import PuckTrajectoryPlanner, TrajectoryPlanningError
 from .vision import BoardVision
+
+log = get_logger("game")
 
 # Shared engine defaults used by GameManager and the visual simulator.
 DEFAULT_WHITE_ELO = 1700
@@ -111,6 +115,7 @@ class GameManager:
         self.board = chess.Board()
         self.move_planner = ChessMovePlanner()
         self.reset_planner = ResetPlanner()
+        self.path_planner = PuckTrajectoryPlanner(self.config)
         self.render_callback = render_callback
         self.random = random.Random(seed)
         self.game_number = 0
@@ -136,6 +141,46 @@ class GameManager:
         # Profiles swap colors every game.
         white_index = self.game_number % 2
         return self.players[white_index if self.board.turn is chess.WHITE else 1 - white_index]
+
+    def plan_is_pathable(self, plan: MovePlan) -> bool:
+        """Return True if every physical transfer has a collision-free puck route."""
+
+        state = self.inventory.clone()
+        try:
+            for transfer in plan.transfers:
+                self.path_planner.plan_transfer(
+                    state, transfer.token_id, transfer.source, transfer.destination
+                )
+                state.move(transfer.token_id, transfer.destination)
+        except TrajectoryPlanningError:
+            return False
+        return True
+
+    def select_executable_move(self, preferred: chess.Move | None = None) -> chess.Move:
+        """Prefer the engine/random move; fall back when planar path is blocked.
+
+        Fixed-height magnets cannot jump like knights in chess notation.  When
+        the preferred legal move has no collision-free XY route, try other
+        legal moves (same policy as the visual twin).
+        """
+
+        if preferred is None:
+            preferred = self._player_for_turn().choose_move(self.board)
+        candidates = [preferred] + [move for move in self.board.legal_moves if move != preferred]
+        blocked = 0
+        for move in candidates:
+            try:
+                plan = self.move_planner.plan(self.board, self.inventory, move)
+            except ValueError:
+                continue
+            if self.plan_is_pathable(plan):
+                if blocked:
+                    log.info("skipped %s blocked move(s); playing %s", blocked, move.uci())
+                return move
+            blocked += 1
+        raise TrajectoryPlanningError(
+            f"no legal move has a collision-free puck path ({blocked} candidates tried)"
+        )
 
     def execute_plan(self, plan: MovePlan) -> None:
         physical_state = self.inventory.clone()
@@ -172,12 +217,18 @@ class GameManager:
 
     def play_opening(self) -> tuple[str, ...]:
         line = self.random.choice(OPENING_LINES)
+        played: list[str] = []
         for uci in line:
             move = chess.Move.from_uci(uci)
             if move not in self.board.legal_moves:
                 break
-            self.execute_move(move)
-        return line
+            plan = self.move_planner.plan(self.board, self.inventory, move)
+            if not self.plan_is_pathable(plan):
+                log.info("opening move %s has no planar path; ending book line", uci)
+                break
+            self.execute_plan(plan)
+            played.append(uci)
+        return tuple(played)
 
     def play_game(self, vary_opening: bool = True, max_plies: int | None = None) -> str:
         if self.board != chess.Board():
@@ -188,7 +239,7 @@ class GameManager:
         while not self.board.is_game_over(claim_draw=True):
             if max_plies is not None and plies >= max_plies:
                 return "*"
-            move = self._player_for_turn().choose_move(self.board)
+            move = self.select_executable_move()
             self.execute_move(move)
             plies += 1
         return self.board.result(claim_draw=True)

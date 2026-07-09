@@ -115,7 +115,7 @@ class PuckTrajectoryPlanner:
                     previous[neighbor] = current
                     heapq.heappush(queue, (candidate_distance, neighbor))
 
-        if previous[end_index] is None:
+        if distances[end_index] == math.inf:
             raise TrajectoryPlanningError("no collision-free puck path found")
 
         path_indices: list[int] = []
@@ -127,18 +127,30 @@ class PuckTrajectoryPlanner:
         return [candidates[index] for index in path_indices]
 
     def segment_clear(self, a: Point, b: Point, obstacles: list[Obstacle]) -> bool:
-        return all(
-            self._distance_point_to_segment(obstacle.center, a, b)
-            >= self.puck.center_clearance_mm - 1e-6
-            for obstacle in obstacles
-        )
+        # Bounding-box prefilter: the R-neighborhood of a segment is contained
+        # in the segment AABB expanded by R.
+        clearance = self.puck.center_clearance_mm - 1e-6
+        min_x = min(a.x_mm, b.x_mm) - clearance
+        max_x = max(a.x_mm, b.x_mm) + clearance
+        min_y = min(a.y_mm, b.y_mm) - clearance
+        max_y = max(a.y_mm, b.y_mm) + clearance
+        for obstacle in obstacles:
+            cx, cy = obstacle.center.x_mm, obstacle.center.y_mm
+            if cx < min_x or cx > max_x or cy < min_y or cy > max_y:
+                continue
+            if self._distance_point_to_segment(obstacle.center, a, b) < clearance:
+                return False
+        return True
 
     def point_clear(self, point: Point, obstacles: list[Obstacle]) -> bool:
-        return all(
-            math.hypot(point.x_mm - obstacle.center.x_mm, point.y_mm - obstacle.center.y_mm)
-            >= self.puck.center_clearance_mm - 1e-6
-            for obstacle in obstacles
-        )
+        clearance = self.puck.center_clearance_mm - 1e-6
+        for obstacle in obstacles:
+            if (
+                math.hypot(point.x_mm - obstacle.center.x_mm, point.y_mm - obstacle.center.y_mm)
+                < clearance
+            ):
+                return False
+        return True
 
     def _candidate_points(self, start: Point, end: Point, obstacles: list[Obstacle]) -> list[Point]:
         points = [start, end]
@@ -161,7 +173,6 @@ class PuckTrajectoryPlanner:
                     if self.point_clear(point, obstacles):
                         points.append(point)
 
-        # Perimeter "highways" help crowded mid-game resets find a detour.
         for col in range(self.config.table_columns):
             x = (col + 0.5) * step
             for y in (min_y, max_y):
@@ -175,13 +186,11 @@ class PuckTrajectoryPlanner:
                 if self.point_clear(point, obstacles):
                     points.append(point)
 
-        # Park and buffer locations are often outside the dense piece field.
         for arm in ArmId:
             for point in (self.layout.park(arm), self.layout.buffer(arm)):
                 if self.point_clear(point, obstacles):
                     points.append(point)
 
-        # Half-step rim samples open corridors when cell centers are boxed in.
         for col in range(self.config.table_columns * 2 + 1):
             for row in (0, self.config.table_rows * 2):
                 point = Point(col * step / 2.0, row * step / 2.0)
@@ -234,4 +243,3 @@ class PuckTrajectoryPlanner:
             seen.add(key)
             result.append(point)
         return result
-

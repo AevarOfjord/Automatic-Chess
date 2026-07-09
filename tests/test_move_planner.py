@@ -31,6 +31,24 @@ class MovePlannerTests(unittest.TestCase):
         self.assertEqual(plan.resulting_inventory.location_of("W_K_e1"), board_location("g1"))
         self.assertEqual(plan.resulting_inventory.location_of("W_R_h1"), board_location("f1"))
 
+    def test_queenside_castling_moves_king_and_rook(self) -> None:
+        board = chess.Board()
+        inventory = PhysicalInventory()
+        planner = ChessMovePlanner()
+        # Clear the queenside corridor without relying on a long book line.
+        for uci in ("d2d4", "d7d5", "b1c3", "b8c6", "c1f4", "c8f5", "d1d2", "d8d7"):
+            plan = planner.plan(board, inventory, chess.Move.from_uci(uci))
+            board = plan.expected_board
+            inventory = plan.resulting_inventory
+
+        castle = chess.Move.from_uci("e1c1")
+        self.assertIn(castle, board.legal_moves)
+        plan = planner.plan(board, inventory, castle)
+        reasons = [transfer.reason for transfer in plan.transfers]
+        self.assertEqual(reasons, ["primary move", "castling rook"])
+        self.assertEqual(plan.resulting_inventory.location_of("W_K_e1"), board_location("c1"))
+        self.assertEqual(plan.resulting_inventory.location_of("W_R_a1"), board_location("d1"))
+
     def test_en_passant_capture_removes_pawn_from_passed_square(self) -> None:
         board = chess.Board()
         inventory = PhysicalInventory()

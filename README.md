@@ -2,7 +2,7 @@
 
 Software-first build for two opposing SCARA chess robots. The PC is the big brain: it owns the chess state, physical inventory, move planning, kinematics, validation, and recovery. The ESP32s are motion executors.
 
-Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess)
+Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess) · License: [MIT](LICENSE)
 
 The physical board model is a 12 column × 8 row magnetic grid. Each cell is 50 mm × 50 mm. The center 8 columns are the playable chessboard, while the 2 left columns store `W1...W16` and the 2 right columns store `B1...B16`.
 
@@ -84,9 +84,15 @@ Captured pieces are placed deterministically, never randomly.
 .\venv\Scripts\python.exe -m unittest discover -v
 ```
 
-## Hardware
+## Docs
 
-See [docs/hardware.md](docs/hardware.md) and [docs/fault_recovery.md](docs/fault_recovery.md).
+- [Architecture](docs/architecture.md)
+- [Hardware bring-up](docs/hardware.md)
+- [Fault recovery](docs/fault_recovery.md)
+
+Environment overrides: `CHESS_ROBOT_PORT`, `CHESS_ROBOT_BAUD`, `CHESS_ROBOT_TIMEOUT_S`, `CHESS_ROBOT_RETRIES`, `CHESS_ROBOT_JOURNAL`.
+
+Verbose logs: `python -m chess_robot -v simulate --random --seed 1 --max-plies 8`
 
 The first hardware milestone should wait until the visual simulator and planner tests are boringly reliable.
 

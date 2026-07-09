@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
@@ -75,3 +76,31 @@ class RobotConfig:
 
     def arm(self, arm_id: ArmId) -> ArmConfig:
         return self.white_arm if arm_id is ArmId.WHITE else self.black_arm
+
+    @classmethod
+    def from_env(cls, base: "RobotConfig | None" = None) -> "RobotConfig":
+        """Overlay serial/runtime settings from environment variables.
+
+        Supported:
+          CHESS_ROBOT_PORT, CHESS_ROBOT_BAUD, CHESS_ROBOT_TIMEOUT_S,
+          CHESS_ROBOT_RETRIES, CHESS_ROBOT_JOURNAL
+        """
+
+        config = base or cls()
+        port = os.environ.get("CHESS_ROBOT_PORT")
+        baud = os.environ.get("CHESS_ROBOT_BAUD")
+        timeout = os.environ.get("CHESS_ROBOT_TIMEOUT_S")
+        retries = os.environ.get("CHESS_ROBOT_RETRIES")
+        journal = os.environ.get("CHESS_ROBOT_JOURNAL")
+        updates: dict[str, object] = {}
+        if port:
+            updates["serial_port"] = port
+        if baud:
+            updates["serial_baudrate"] = int(baud)
+        if timeout:
+            updates["response_timeout_s"] = float(timeout)
+        if retries:
+            updates["command_retries"] = int(retries)
+        if journal:
+            updates["journal_path"] = Path(journal)
+        return replace(config, **updates) if updates else config

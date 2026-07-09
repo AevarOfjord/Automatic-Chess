@@ -5,14 +5,22 @@ import dataclasses
 from pathlib import Path
 
 from .config import RobotConfig
-from .game import GameManager
+from .game import (
+    DEFAULT_BLACK_ELO,
+    DEFAULT_BLACK_SKILL,
+    DEFAULT_MOVE_TIME_S,
+    DEFAULT_WHITE_ELO,
+    DEFAULT_WHITE_SKILL,
+    GameManager,
+)
 from .geometry import unreachable, validate_layout
+from .logging_config import configure_logging
 from .vision import BoardVision
 from .visual_simulator import run_visual_simulator
 
 
 def reachability_command(_args: argparse.Namespace) -> int:
-    report = validate_layout(RobotConfig())
+    report = validate_layout(RobotConfig.from_env())
     failures = list(unreachable(report))
     minimum_margin = min(
         result.singularity_margin
@@ -31,10 +39,9 @@ def reachability_command(_args: argparse.Namespace) -> int:
 
 
 def manager_from_args(args: argparse.Namespace, mock: bool) -> GameManager:
-    config = dataclasses.replace(
-        RobotConfig(),
-        serial_port=getattr(args, "port", "COM3"),
-    )
+    config = RobotConfig.from_env()
+    if hasattr(args, "port") and args.port:
+        config = dataclasses.replace(config, serial_port=args.port)
     vision = BoardVision(
         camera_index=getattr(args, "camera", 0),
         use_mock=mock,
@@ -101,6 +108,12 @@ def visual_command(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dual-SCARA chess robot controller")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="enable debug logging on stderr",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     reachability_parser = subparsers.add_parser("reachability", help="validate arm geometry")
@@ -123,14 +136,6 @@ def build_parser() -> argparse.ArgumentParser:
     visual_parser.add_argument("--fps", type=int, default=60)
     visual_parser.add_argument("--engine", default="stockfish.exe")
     visual_parser.add_argument("--random", action="store_true", help="use random legal moves instead of Stockfish")
-    from .game import (
-        DEFAULT_BLACK_ELO,
-        DEFAULT_BLACK_SKILL,
-        DEFAULT_MOVE_TIME_S,
-        DEFAULT_WHITE_ELO,
-        DEFAULT_WHITE_SKILL,
-    )
-
     visual_parser.add_argument("--white-elo", type=int, default=DEFAULT_WHITE_ELO)
     visual_parser.add_argument("--black-elo", type=int, default=DEFAULT_BLACK_ELO)
     visual_parser.add_argument("--white-skill", type=int, default=DEFAULT_WHITE_SKILL)
@@ -143,8 +148,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     visual_parser.set_defaults(function=visual_command)
 
+    default_port = RobotConfig.from_env().serial_port
     run_parser = subparsers.add_parser("run", help="run unattended games on physical hardware")
-    run_parser.add_argument("--port", default="COM3")
+    run_parser.add_argument("--port", default=default_port)
     run_parser.add_argument("--camera", type=int, default=0)
     run_parser.add_argument("--calibration", default="runtime_data/camera_calibration.npz")
     run_parser.add_argument("--engine", default="stockfish.exe")
@@ -161,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    configure_logging(verbose=getattr(args, "verbose", False))
     return args.function(args)
 
 

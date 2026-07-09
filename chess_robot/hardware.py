@@ -7,9 +7,12 @@ import threading
 from .config import ArmId, RobotConfig
 from .geometry import BoardLayout, JointPose, Point, ScaraKinematics
 from .inventory import PhysicalInventory
+from .logging_config import get_logger
 from .protocol import Action, ArmCommand, ArmResponse, CommandJournal, Status, new_command_id
 from .trajectory import PuckTrajectoryPlanner, TrajectoryPlanningError
 from .transport import GatewayTransport, MockGatewayTransport, SerialGatewayTransport
+
+log = get_logger("hardware")
 
 
 class MotionFault(RuntimeError):
@@ -56,6 +59,7 @@ class DualArmHardware:
                 f"{active.arm.value} {active.action.value} failed: "
                 f"{response.detail or response.status.value}"
             )
+            log.warning("command failed (attempt %s/%s): %s", attempt + 1, attempts, last_error)
             # Retry transient gateway timeouts only; permanent faults fail immediately.
             if "timeout" not in (response.detail or "").lower():
                 break
@@ -194,6 +198,7 @@ class DualArmHardware:
         ]
         with self.workspace_lock:
             # Keep-out policy: only one arm may work the table; park the opposite arm first.
+            log.debug("transfer %s %s -> %s token=%s", arm.value, source, destination, token_id)
             self.ensure_parked(arm.opposite)
             self._trajectory(
                 arm,

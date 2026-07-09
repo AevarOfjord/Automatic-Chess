@@ -5,7 +5,10 @@ from abc import ABC, abstractmethod
 
 import serial
 
+from .logging_config import get_logger
 from .protocol import Action, ArmCommand, ArmResponse, Status
+
+log = get_logger("transport")
 
 
 class GatewayTransport(ABC):
@@ -33,6 +36,7 @@ class MockGatewayTransport(GatewayTransport):
         if self.fail_next:
             detail, self.fail_next = self.fail_next, None
             response = ArmResponse(command.command_id, command.arm, Status.FAULT, detail)
+            log.warning("mock fault injected: %s %s", command.action.value, detail)
         elif self.stopped and command.action not in {Action.HOME, Action.STATUS}:
             response = ArmResponse(command.command_id, command.arm, Status.FAULT, "arm is stopped")
         else:
@@ -52,12 +56,15 @@ class MockGatewayTransport(GatewayTransport):
 
 class SerialGatewayTransport(GatewayTransport):
     def __init__(self, port: str, baudrate: int = 115200) -> None:
+        log.info("opening serial gateway %s @ %s", port, baudrate)
         self.serial = serial.Serial(port, baudrate, timeout=0.2)
         time.sleep(2.0)
         self.serial.reset_input_buffer()
 
     def exchange(self, command: ArmCommand, timeout_s: float) -> ArmResponse:
-        self.serial.write(command.to_wire())
+        wire = command.to_wire()
+        log.debug("TX %s", wire.decode("utf-8", errors="replace").strip())
+        self.serial.write(wire)
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             raw = self.serial.readline()
@@ -66,12 +73,26 @@ class SerialGatewayTransport(GatewayTransport):
             try:
                 response = ArmResponse.from_wire(raw)
             except (ValueError, KeyError):
+                log.debug("ignored non-JSON serial line: %r", raw[:80])
                 continue
             if response.command_id != command.command_id:
+                log.debug(
+                    "ignored response for other command id=%s want=%s",
+                    response.command_id,
+                    command.command_id,
+                )
                 continue
             if response.status in {Status.DONE, Status.FAULT}:
+                log.debug("RX %s %s", response.status.value, response.detail)
                 return response
+        log.error(
+            "gateway timeout after %.1fs waiting for %s %s",
+            timeout_s,
+            command.arm.value,
+            command.action.value,
+        )
         return ArmResponse(command.command_id, command.arm, Status.FAULT, "gateway timeout")
 
     def close(self) -> None:
+        log.info("closing serial gateway")
         self.serial.close()
