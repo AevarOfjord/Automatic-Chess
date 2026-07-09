@@ -16,6 +16,18 @@ Table rows are **R1…R8** bottom → top (same direction as chess ranks and +Y 
 
 ## Setup
 
+Using Make (recommended):
+
+```powershell
+make install
+make run
+```
+
+- `make install` — create `./venv` if needed, then install `requirements.txt`
+- `make run` — run `install` if needed, then launch the visual simulator
+
+Manual setup:
+
 ```powershell
 python -m venv venv
 .\venv\Scripts\Activate.ps1
