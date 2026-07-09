@@ -28,17 +28,25 @@ PIECE_SYMBOLS = {
 
 @dataclass
 class Viewport:
-    width: int = 1220
-    height: int = 920
+    # Extra width on the right for the dashboard panel (screen-space overlay).
+    width: int = 1480
+    height: int = 940
     world_min_x: float = -90.0
     world_max_x: float = 690.0
     world_min_y: float = -190.0
     world_max_y: float = 590.0
     margin: int = 28
+    # Dashboard occupies this many pixels on the right edge of the window.
+    dashboard_width: int = 360
+
+    @property
+    def board_area_width(self) -> int:
+        """Pixels available for the top-down twin (excludes dashboard strip)."""
+        return max(200, self.width - self.dashboard_width - self.margin)
 
     @property
     def scale(self) -> float:
-        sx = (self.width - self.margin * 2) / (self.world_max_x - self.world_min_x)
+        sx = (self.board_area_width - self.margin) / (self.world_max_x - self.world_min_x)
         sy = (self.height - self.margin * 2) / (self.world_max_y - self.world_min_y)
         return min(sx, sy)
 
@@ -90,6 +98,11 @@ class VisualOptions:
     white_skill: int = DEFAULT_WHITE_SKILL
     black_skill: int = DEFAULT_BLACK_SKILL
     move_time_s: float = DEFAULT_MOVE_TIME_S
+    # Control-board options
+    auto_loop: bool = True  # after game over, auto-reset and continue
+    show_paths: bool = True
+    show_cell_labels: bool = True
+    show_arm_labels: bool = True
 
 
 @dataclass
@@ -98,5 +111,17 @@ class SimulatorStats:
     plies: int = 0
     completed_transfers: int = 0
     last_move: str = "waiting"
+    last_move_san: str = "—"
     mode: str = "initializing"
-    message: str = "Space pauses, N steps, R resets, +/- changes speed"
+    message: str = "Use the control board or keyboard (Space / N / R / +/-)"
+    last_result: str = ""
+    moves_san: list[str] | None = None
+    path_skips: int = 0
+    active_arm: str = "—"
+    active_step_label: str = "idle"
+    plan_transfers_total: int = 0
+    plan_transfers_done: int = 0
+
+    def __post_init__(self) -> None:
+        if self.moves_san is None:
+            self.moves_san = []

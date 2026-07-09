@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import chess
 
 from .config import ArmId
 from .geometry import Point
 from .visual_models import PIECE_SYMBOLS, Viewport
+
+
+@dataclass
+class UiButton:
+    action: str
+    rect: object  # pygame.Rect
+    label: str
+    kind: str = "action"  # action | toggle | speed
+    active: bool = False
+    enabled: bool = True
 
 
 class PygameRenderer:
@@ -16,11 +28,15 @@ class PygameRenderer:
         self.viewport = viewport or Viewport()
         pygame.init()
         self.screen = pygame.display.set_mode((self.viewport.width, self.viewport.height))
-        pygame.display.set_caption("Dual-SCARA Chess Robot Digital Twin")
+        pygame.display.set_caption("Dual-SCARA Chess Robot — Control Board")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont("segoeui", 18)
-        self.small = pygame.font.SysFont("segoeui", 14)
+        self.title_font = pygame.font.SysFont("segoeui", 20, bold=True)
+        self.font = pygame.font.SysFont("segoeui", 16)
+        self.small = pygame.font.SysFont("segoeui", 13)
+        self.mono = pygame.font.SysFont("consolas", 13)
         self.piece_font = pygame.font.SysFont("segoeuisymbol", 25)
+        self._buttons: list[UiButton] = []
+        self._hover_action: str | None = None
 
     def run(self) -> None:
         pygame = self.pygame
@@ -28,6 +44,8 @@ class PygameRenderer:
         try:
             while running:
                 dt_s = self.clock.tick(self.sim.options.fps) / 1000.0
+                mouse = pygame.mouse.get_pos()
+                self._hover_action = self._hit_button(mouse)
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
@@ -40,10 +58,20 @@ class PygameRenderer:
                             self.sim.request_single_step()
                         elif event.key == pygame.K_r:
                             self.sim.reset_now()
+                        elif event.key == pygame.K_s:
+                            self.sim.skip_animation()
                         elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-                            self.sim.options.speed = min(8.0, self.sim.options.speed * 1.25)
+                            self.sim.nudge_speed(1.25)
                         elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                            self.sim.options.speed = max(0.1, self.sim.options.speed / 1.25)
+                            self.sim.nudge_speed(1 / 1.25)
+                        elif event.key == pygame.K_l:
+                            self.sim.toggle_auto_loop()
+                        elif event.key == pygame.K_p:
+                            self.sim.toggle_show_paths()
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        action = self._hit_button(event.pos)
+                        if action:
+                            self._dispatch(action)
                 self.sim.tick(dt_s)
                 self.draw()
                 pygame.display.flip()
@@ -51,8 +79,46 @@ class PygameRenderer:
             self.sim.close()
             pygame.quit()
 
+    def _hit_button(self, pos: tuple[int, int]) -> str | None:
+        for button in self._buttons:
+            if button.enabled and button.rect.collidepoint(pos):
+                return button.action
+        return None
+
+    def _dispatch(self, action: str) -> None:
+        sim = self.sim
+        if action == "play":
+            sim.resume()
+        elif action == "pause":
+            sim.pause()
+        elif action == "step":
+            sim.request_single_step()
+        elif action == "skip":
+            sim.skip_animation()
+        elif action == "reset":
+            sim.reset_now()
+        elif action == "next_game":
+            sim.reset_now()
+            sim.resume()
+        elif action == "speed_down":
+            sim.nudge_speed(1 / 1.25)
+        elif action == "speed_up":
+            sim.nudge_speed(1.25)
+        elif action.startswith("speed_"):
+            try:
+                sim.set_speed(float(action.split("_", 1)[1]))
+            except ValueError:
+                pass
+        elif action == "auto_loop":
+            sim.toggle_auto_loop()
+        elif action == "show_paths":
+            sim.toggle_show_paths()
+        elif action == "show_labels":
+            sim.toggle_show_labels()
+
     def draw(self) -> None:
-        self.screen.fill((24, 27, 33))
+        # Light studio background
+        self.screen.fill((232, 236, 242))
         self._draw_workspace()
         self._draw_storage()
         self._draw_board()
@@ -64,18 +130,18 @@ class PygameRenderer:
     def _draw_workspace(self) -> None:
         pygame = self.pygame
         board_rect = self._rect_from_world(Point(-45, -155), Point(645, 555))
-        pygame.draw.rect(self.screen, (35, 39, 48), board_rect, border_radius=18)
-        pygame.draw.rect(self.screen, (68, 75, 90), board_rect, width=2, border_radius=18)
+        pygame.draw.rect(self.screen, (245, 247, 250), board_rect, border_radius=18)
+        pygame.draw.rect(self.screen, (180, 188, 200), board_rect, width=2, border_radius=18)
         for arm in ArmId:
             base = Point(self.sim.config.arm(arm).base_x_mm, self.sim.config.arm(arm).base_y_mm)
-            pygame.draw.circle(self.screen, (81, 92, 116), self.viewport.screen(base), self.viewport.length(18))
+            pygame.draw.circle(self.screen, (150, 160, 180), self.viewport.screen(base), self.viewport.length(18))
             label = "White robot base" if arm is ArmId.WHITE else "Black robot base"
-            self._label(label, base, (180, 190, 210), dy=-28 if arm is ArmId.WHITE else 24)
+            self._label(label, base, (70, 80, 100), dy=-28 if arm is ArmId.WHITE else 24)
 
     def _draw_board(self) -> None:
         pygame = self.pygame
         layout = self.sim.layout
-        colors = ((236, 220, 188), (110, 145, 112))
+        colors = ((245, 232, 205), (125, 158, 118))
         size = self.sim.config.square_size_mm
         chess_start_col = layout.chess_start_col
         chess_end_col = layout.chess_end_col
@@ -88,25 +154,25 @@ class PygameRenderer:
                     chess_file = table_col - chess_start_col
                     pygame.draw.rect(self.screen, colors[(row_from_bottom + chess_file) % 2], rect)
                 else:
-                    pygame.draw.rect(self.screen, (50, 55, 66), rect)
-                    pygame.draw.rect(self.screen, (70, 77, 92), rect, width=1)
+                    pygame.draw.rect(self.screen, (220, 224, 232), rect)
+                    pygame.draw.rect(self.screen, (190, 196, 208), rect, width=1)
                 pygame.draw.circle(
                     self.screen,
-                    (88, 96, 112),
+                    (160, 168, 180),
                     self.viewport.screen(Point(world.x_mm + size / 2, world.y_mm + size / 2)),
                     self.viewport.length(3),
                 )
-                # One clear name per cell: a1…h8 on the board, W1…B16 on racks.
-                label_color = (
-                    (90, 100, 115)
-                    if chess_start_col <= table_col < chess_end_col
-                    else (170, 150, 130)
-                )
-                self._tiny(
-                    cell_name,
-                    Point(world.x_mm + size / 2, world.y_mm + size - 10),
-                    label_color,
-                )
+                if self.sim.options.show_cell_labels:
+                    label_color = (
+                        (80, 90, 105)
+                        if chess_start_col <= table_col < chess_end_col
+                        else (130, 110, 90)
+                    )
+                    self._tiny(
+                        cell_name,
+                        Point(world.x_mm + size / 2, world.y_mm + size - 10),
+                        label_color,
+                    )
         table_outline = self._rect_from_world(
             Point(0, 0), Point(self.sim.config.table_width_mm, self.sim.config.table_height_mm)
         )
@@ -117,25 +183,25 @@ class PygameRenderer:
                 self.sim.config.board_size_mm,
             ),
         )
-        pygame.draw.rect(self.screen, (18, 20, 25), table_outline, width=3)
-        pygame.draw.rect(self.screen, (18, 20, 25), chess_outline, width=3)
+        pygame.draw.rect(self.screen, (60, 68, 82), table_outline, width=3)
+        pygame.draw.rect(self.screen, (40, 48, 60), chess_outline, width=3)
         # Axis legends: C1…C12 left→right, R1…R8 bottom→top (matches chess ranks).
         for table_col in range(self.sim.config.table_columns):
             self._tiny(
                 layout.column_label(table_col),
                 Point((table_col + 0.5) * size, -16),
-                (210, 218, 230),
+                (70, 80, 95),
             )
         for row_from_bottom in range(self.sim.config.table_rows):
             y = (row_from_bottom + 0.5) * size
-            self._tiny(layout.row_label(row_from_bottom), Point(-22, y), (210, 218, 230))
+            self._tiny(layout.row_label(row_from_bottom), Point(-22, y), (70, 80, 95))
         # Chess file/rank strip along the play area for quick orientation.
         for table_col in range(chess_start_col, chess_end_col):
             file_letter = chr(ord("a") + (table_col - chess_start_col))
             self._tiny(
                 file_letter,
                 Point((table_col + 0.5) * size, self.sim.config.table_height_mm + 16),
-                (180, 190, 210),
+                (80, 90, 110),
             )
         for row_from_bottom in range(self.sim.config.board_squares):
             self._tiny(
@@ -144,7 +210,7 @@ class PygameRenderer:
                     self.sim.config.board_origin_x_mm + self.sim.config.board_size_mm + 14,
                     (row_from_bottom + 0.5) * size,
                 ),
-                (180, 190, 210),
+                (80, 90, 110),
             )
 
     def _draw_storage(self) -> None:
@@ -153,25 +219,27 @@ class PygameRenderer:
             for index in range(16):
                 p = self.sim.layout.dead_slot(arm, index)
                 pygame.draw.circle(
-                    self.screen, (69, 51, 57), self.viewport.screen(p), self.viewport.length(14), width=2
+                    self.screen, (160, 120, 110), self.viewport.screen(p), self.viewport.length(14), width=2
                 )
             rack_x = 50 if arm is ArmId.WHITE else 550
             self._label(
                 f"{arm.value.title()} rack W1–W16" if arm is ArmId.WHITE else "Black rack B1–B16",
                 Point(rack_x, 430),
-                (170, 180, 200),
+                (90, 100, 120),
                 dy=-8,
             )
 
     def _draw_planned_paths(self) -> None:
+        if not self.sim.options.show_paths:
+            return
         pygame = self.pygame
         for path in self.sim.current_plan_paths[:6]:
             if len(path.points) < 2:
                 continue
             screen_points = [self.viewport.screen(point) for point in path.points]
-            pygame.draw.lines(self.screen, (245, 221, 111), False, screen_points, width=2)
+            pygame.draw.lines(self.screen, (200, 140, 20), False, screen_points, width=2)
             for point in screen_points[1:-1]:
-                pygame.draw.circle(self.screen, (245, 221, 111), point, self.viewport.length(4))
+                pygame.draw.circle(self.screen, (200, 140, 20), point, self.viewport.length(4))
 
     def _draw_pieces(self) -> None:
         held = {arm.held_token_id for arm in self.sim.arms.values() if arm.held_token_id}
@@ -239,34 +307,288 @@ class PygameRenderer:
             pygame.draw.circle(
                 self.screen, magnet_color, self.viewport.screen(arm.tool), self.viewport.length(5)
             )
-            self._tiny("fixed height", Point(arm.tool.x_mm + 28, arm.tool.y_mm + 18), (210, 218, 230))
+            if self.sim.options.show_arm_labels:
+                self._tiny("fixed height", Point(arm.tool.x_mm + 28, arm.tool.y_mm + 18), (70, 80, 100))
 
     def _draw_panel(self) -> None:
+        """Right-side control board: status + clickable operator controls."""
         pygame = self.pygame
-        panel = pygame.Rect(self.viewport.width - 330, 26, 300, 230)
-        pygame.draw.rect(self.screen, (16, 18, 24), panel, border_radius=14)
-        pygame.draw.rect(self.screen, (72, 80, 98), panel, width=1, border_radius=14)
-        lines = [
-            "Dual-SCARA Chess Robot",
-            f"Game: {self.sim.stats.game_number}",
-            f"Ply: {self.sim.stats.plies}",
-            f"Last move: {self.sim.stats.last_move}",
-            f"Mode: {self.sim.stats.mode}",
-            f"Transfers: {self.sim.stats.completed_transfers}",
-            f"Speed: {self.sim.options.speed:0.2f}x",
-            f"State: {'paused' if self.sim.paused else 'running'}",
-            f"Next dead slots: {self.sim.next_dead_slot_summary()}",
-            "",
-            self.sim.stats.message,
+        stats = self.sim.stats
+        opts = self.sim.options
+        pad = 12
+        width = self.viewport.dashboard_width - 16
+        x0 = self.viewport.width - self.viewport.dashboard_width + 6
+        y0 = 12
+        height = self.viewport.height - 24
+        panel = pygame.Rect(x0, y0, width, height)
+        pygame.draw.rect(self.screen, (252, 253, 255), panel, border_radius=14)
+        pygame.draw.rect(self.screen, (180, 188, 204), panel, width=1, border_radius=14)
+
+        self._buttons = []
+        y = panel.y + pad
+        x = panel.x + pad
+        inner_w = panel.width - pad * 2
+
+        # —— Header ——
+        self._blit_text("CONTROL BOARD", x, y, self.title_font, (30, 36, 48))
+        y += 24
+        running = not self.sim.paused
+        badge = "RUNNING" if running else "PAUSED"
+        badge_color = (56, 170, 100) if running else (220, 160, 50)
+        self._draw_badge(x, y, badge, badge_color)
+        self._blit_text(f"{opts.speed:0.2f}×", x + 100, y + 2, self.font, (40, 48, 62))
+        y += 30
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Transport controls ——
+        y = self._section_title(x, y, "TRANSPORT")
+        row1 = [
+            ("play", "Play", not running),
+            ("pause", "Pause", running),
+            ("step", "Step", True),
         ]
-        y = panel.y + 16
-        for idx, line in enumerate(lines):
-            font = self.font if idx == 0 else self.small
-            color = (245, 247, 250) if idx == 0 else (190, 200, 215)
-            for wrapped in self._wrap(line, 34):
-                surface = font.render(wrapped, True, color)
-                self.screen.blit(surface, (panel.x + 16, y))
-                y += 22 if idx == 0 else 18
+        y = self._button_row(x, y, inner_w, row1)
+        row2 = [
+            ("skip", "Skip anim", True),
+            ("reset", "Reset", True),
+            ("next_game", "Next game", True),
+        ]
+        y = self._button_row(x, y, inner_w, row2)
+        y += 4
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Speed ——
+        y = self._section_title(x, y, "SPEED")
+        y = self._button_row(
+            x,
+            y,
+            inner_w,
+            [
+                ("speed_down", "−", True),
+                ("speed_0.5", "0.5×", abs(opts.speed - 0.5) < 0.05),
+                ("speed_1.0", "1×", abs(opts.speed - 1.0) < 0.05),
+                ("speed_2.0", "2×", abs(opts.speed - 2.0) < 0.05),
+                ("speed_4.0", "4×", abs(opts.speed - 4.0) < 0.05),
+                ("speed_up", "+", True),
+            ],
+            height=28,
+        )
+        y += 4
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Modes ——
+        y = self._section_title(x, y, "MODES")
+        y = self._button_row(
+            x,
+            y,
+            inner_w,
+            [
+                ("auto_loop", "Auto-loop", opts.auto_loop),
+                ("show_paths", "Paths", opts.show_paths),
+                ("show_labels", "Labels", opts.show_cell_labels),
+            ],
+        )
+        y += 4
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Game telemetry ——
+        y = self._section_title(x, y, "GAME")
+        move_no = stats.plies // 2 + 1
+        side = "White" if self.sim.board.turn else "Black"
+        for label, value in (
+            ("Match", f"#{stats.game_number}"),
+            ("Move", f"{move_no}  ({side})"),
+            ("Ply", str(stats.plies)),
+            ("Last", f"{stats.last_move_san}"),
+            ("UCI", stats.last_move),
+            ("Mode", stats.mode),
+            ("Result", stats.last_result or "—"),
+        ):
+            y = self._kv_row(x, y, inner_w, label, value)
+        y += 4
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Players ——
+        y = self._section_title(x, y, "ENGINES")
+        if opts.use_engine:
+            y = self._player_card(x, y, inner_w, "White", opts.white_elo, opts.white_skill, opts.move_time_s)
+            y = self._player_card(x, y, inner_w, "Black", opts.black_elo, opts.black_skill, opts.move_time_s)
+            fair = opts.white_elo == opts.black_elo and opts.white_skill == opts.black_skill
+            y = self._kv_row(x, y, inner_w, "Match", "Fair" if fair else "Handicap")
+        else:
+            y = self._kv_row(x, y, inner_w, "Mode", "Random legal moves")
+        y += 2
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Motion ——
+        y = self._section_title(x, y, "MOTION")
+        held = next((a.held_token_id for a in self.sim.arms.values() if a.held_token_id), None)
+        progress = 0.0
+        if stats.plan_transfers_total:
+            progress = stats.plan_transfers_done / max(1, stats.plan_transfers_total)
+        for label, value in (
+            ("Arm", stats.active_arm),
+            ("Step", stats.active_step_label[:26]),
+            ("Magnet", "ON" if held else "off"),
+            ("Transfers", str(stats.completed_transfers)),
+            ("Plan", f"{stats.plan_transfers_done}/{stats.plan_transfers_total}"),
+            ("Rack", self.sim.next_dead_slot_summary()),
+            ("Skips", str(stats.path_skips)),
+        ):
+            y = self._kv_row(x, y, inner_w, label, value)
+        y = self._progress_bar(x, y + 2, inner_w, progress)
+        y += 6
+        y = self._section_rule(x, y, inner_w)
+
+        # —— Moves + status ——
+        y = self._section_title(x, y, "MOVES")
+        y = self._draw_move_list(x, y, inner_w, stats.moves_san or [], max_lines=6)
+        y += 4
+        y = self._section_rule(x, y, inner_w)
+        y = self._section_title(x, y, "STATUS")
+        for line in self._wrap(stats.message, 34)[:4]:
+            self._blit_text(line, x, y, self.small, (50, 58, 72))
+            y += 15
+
+        # —— Keyboard legend ——
+        legend_y = panel.bottom - 72
+        if legend_y > y + 8:
+            y = self._section_rule(x, legend_y, inner_w)
+            y = self._section_title(x, y, "KEYS")
+            self._blit_text("Space play/pause · N step · S skip", x, y, self.mono, (100, 110, 125))
+            y += 14
+            self._blit_text("R reset · L auto-loop · P paths", x, y, self.mono, (100, 110, 125))
+            y += 14
+            self._blit_text("+/- speed · Esc quit", x, y, self.mono, (100, 110, 125))
+
+    def _button_row(
+        self,
+        x: int,
+        y: int,
+        width: int,
+        items: list[tuple[str, str, bool]],
+        height: int = 32,
+    ) -> int:
+        """Draw a row of equal-width buttons. items: (action, label, active_or_enabled hint)."""
+        pygame = self.pygame
+        gap = 6
+        n = max(1, len(items))
+        btn_w = (width - gap * (n - 1)) // n
+        for i, (action, label, flag) in enumerate(items):
+            bx = x + i * (btn_w + gap)
+            rect = pygame.Rect(bx, y, btn_w, height)
+            hover = self._hover_action == action
+            # For transport play/pause, flag means "this button is the useful action".
+            # For toggles/speed, flag means selected/active.
+            if action in {"auto_loop", "show_paths", "show_labels"} or action.startswith("speed_"):
+                active = flag
+                enabled = True
+            elif action in {"play", "pause"}:
+                active = flag
+                enabled = True
+            else:
+                active = False
+                enabled = True
+            self._draw_button(rect, label, active=active, hover=hover, enabled=enabled)
+            self._buttons.append(UiButton(action, rect, label, active=active, enabled=enabled))
+        return y + height + 6
+
+    def _draw_button(
+        self,
+        rect,
+        label: str,
+        *,
+        active: bool,
+        hover: bool,
+        enabled: bool,
+    ) -> None:
+        pygame = self.pygame
+        if not enabled:
+            fill, border, text = (230, 232, 238), (200, 204, 214), (160, 165, 175)
+        elif active:
+            fill, border, text = (40, 120, 220), (30, 100, 190), (255, 255, 255)
+        elif hover:
+            fill, border, text = (225, 232, 245), (100, 140, 200), (30, 40, 55)
+        else:
+            fill, border, text = (240, 243, 248), (175, 184, 200), (40, 48, 62)
+        pygame.draw.rect(self.screen, fill, rect, border_radius=8)
+        pygame.draw.rect(self.screen, border, rect, width=1, border_radius=8)
+        surface = self.small.render(label, True, text)
+        self.screen.blit(
+            surface,
+            (rect.centerx - surface.get_width() // 2, rect.centery - surface.get_height() // 2),
+        )
+
+    def _section_title(self, x: int, y: int, title: str) -> int:
+        self._blit_text(title, x, y, self.small, (30, 110, 200))
+        return y + 18
+
+    def _section_rule(self, x: int, y: int, width: int) -> int:
+        pygame = self.pygame
+        pygame.draw.line(self.screen, (210, 216, 226), (x, y), (x + width, y), 1)
+        return y + 10
+
+    def _kv_row(self, x: int, y: int, width: int, label: str, value: str) -> int:
+        self._blit_text(label, x, y, self.small, (100, 110, 125))
+        surface = self.small.render(str(value), True, (30, 36, 48))
+        self.screen.blit(surface, (x + width - surface.get_width(), y))
+        return y + 17
+
+    def _player_card(
+        self, x: int, y: int, width: int, side: str, elo: int, skill: int, think_s: float
+    ) -> int:
+        pygame = self.pygame
+        accent = (240, 240, 245) if side == "White" else (55, 60, 72)
+        outline = (180, 185, 195) if side == "White" else (55, 60, 72)
+        pygame.draw.circle(self.screen, accent, (x + 8, y + 8), 6)
+        pygame.draw.circle(self.screen, outline, (x + 8, y + 8), 6, width=1)
+        self._blit_text(side, x + 20, y, self.font, (30, 36, 48))
+        detail = f"Elo {elo}  ·  skill {skill}  ·  {think_s:0.1f}s"
+        self._blit_text(detail, x + 20, y + 16, self.small, (100, 110, 125))
+        return y + 38
+
+    def _progress_bar(self, x: int, y: int, width: int, fraction: float) -> int:
+        pygame = self.pygame
+        h = 8
+        pygame.draw.rect(self.screen, (220, 226, 236), pygame.Rect(x, y, width, h), border_radius=4)
+        fill = max(0, min(1.0, fraction))
+        if fill > 0:
+            pygame.draw.rect(
+                self.screen,
+                (40, 130, 230),
+                pygame.Rect(x, y, max(4, int(width * fill)), h),
+                border_radius=4,
+            )
+        return y + h + 4
+
+    def _draw_badge(self, x: int, y: int, text: str, color: tuple[int, int, int]) -> None:
+        pygame = self.pygame
+        surface = self.small.render(text, True, (255, 255, 255))
+        rect = pygame.Rect(x, y, surface.get_width() + 14, surface.get_height() + 6)
+        pygame.draw.rect(self.screen, color, rect, border_radius=8)
+        self.screen.blit(surface, (x + 7, y + 3))
+
+    def _draw_move_list(self, x: int, y: int, width: int, moves: list[str], max_lines: int = 10) -> int:
+        if not moves:
+            self._blit_text("No moves yet", x, y, self.small, (130, 138, 150))
+            return y + 18
+        pairs: list[str] = []
+        for i in range(0, len(moves), 2):
+            num = i // 2 + 1
+            white = moves[i]
+            black = moves[i + 1] if i + 1 < len(moves) else ""
+            pairs.append(f"{num}. {white} {black}".strip())
+        shown = pairs[-max_lines:]
+        for line in shown:
+            self._blit_text(line, x, y, self.mono, (40, 48, 62))
+            y += 15
+        if len(pairs) > max_lines:
+            self._blit_text(f"… {len(pairs) - max_lines} earlier", x, y, self.small, (120, 128, 140))
+            y += 15
+        return y
+
+    def _blit_text(self, text: str, x: int, y: int, font, color: tuple[int, int, int]) -> None:
+        self.screen.blit(font.render(text, True, color), (x, y))
 
     def _rect_from_world(self, a: Point, b: Point):
         pygame = self.pygame

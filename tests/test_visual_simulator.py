@@ -47,6 +47,44 @@ class VisualSimulatorTests(unittest.TestCase):
         self.assertNotIn("lift piece", labels)
         self.assertEqual(z_values, {(0.0, 0.0)})
 
+    def test_dashboard_stats_track_san_and_plan_progress(self) -> None:
+        simulator = VisualChessRobotSimulator(
+            options=VisualOptions(seed=6, max_plies=2, speed=12.0, auto_start=True)
+        )
+        for _ in range(4000):
+            simulator.tick(0.05)
+            if simulator.stats.plies >= 1 and simulator.stats.moves_san:
+                break
+        self.assertGreaterEqual(simulator.stats.plies, 1)
+        self.assertTrue(simulator.stats.moves_san)
+        self.assertNotEqual(simulator.stats.last_move_san, "—")
+        self.assertGreaterEqual(simulator.stats.plan_transfers_total, 0)
+        simulator.close()
+
+    def test_control_board_actions_change_runtime_state(self) -> None:
+        simulator = VisualChessRobotSimulator(options=VisualOptions(seed=8, auto_start=False, speed=1.0))
+        self.assertTrue(simulator.paused)
+        simulator.resume()
+        self.assertFalse(simulator.paused)
+        simulator.pause()
+        self.assertTrue(simulator.paused)
+        simulator.set_speed(2.0)
+        self.assertAlmostEqual(simulator.options.speed, 2.0)
+        simulator.nudge_speed(2.0)
+        self.assertAlmostEqual(simulator.options.speed, 4.0)
+        simulator.toggle_auto_loop()
+        self.assertFalse(simulator.options.auto_loop)
+        simulator.toggle_show_paths()
+        self.assertFalse(simulator.options.show_paths)
+        simulator.request_single_step()
+        for _ in range(50):
+            simulator.tick(0.05)
+            if simulator.plan_queue or simulator.active_step:
+                break
+        simulator.skip_animation()
+        self.assertIsNone(simulator.active_step)
+        simulator.close()
+
 
 if __name__ == "__main__":
     unittest.main()

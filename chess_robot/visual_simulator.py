@@ -106,11 +106,73 @@ class VisualChessRobotSimulator:
     def request_single_step(self) -> None:
         self.step_once = True
         self.paused = False
+        self.stats.message = "Stepping one planned move"
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
         if self.paused:
             self.stats.mode = "paused"
+            self.stats.message = "Paused — press Play or Step"
+        else:
+            self.stats.mode = "running"
+            self.stats.message = "Running"
+
+    def pause(self) -> None:
+        self.paused = True
+        self.stats.mode = "paused"
+        self.stats.message = "Paused — press Play or Step"
+
+    def resume(self) -> None:
+        self.paused = False
+        self.step_once = False
+        self.stats.mode = "running"
+        self.stats.message = "Running"
+
+    def set_speed(self, speed: float) -> None:
+        self.options.speed = max(0.1, min(8.0, float(speed)))
+        self.stats.message = f"Speed {self.options.speed:0.2f}×"
+
+    def nudge_speed(self, factor: float) -> None:
+        self.set_speed(self.options.speed * factor)
+
+    def toggle_auto_loop(self) -> None:
+        self.options.auto_loop = not self.options.auto_loop
+        state = "ON" if self.options.auto_loop else "OFF"
+        self.stats.message = f"Auto-loop after game: {state}"
+
+    def toggle_show_paths(self) -> None:
+        self.options.show_paths = not self.options.show_paths
+
+    def toggle_show_labels(self) -> None:
+        self.options.show_cell_labels = not self.options.show_cell_labels
+
+    def skip_animation(self) -> None:
+        """Jump through the current plan's animation without waiting."""
+        guard = 0
+        while guard < 5000 and (self.active_step or self.plan_queue or self.pending_plan):
+            guard += 1
+            if self.active_step:
+                step = self.active_step
+                arm = self.arms[step.arm]
+                arm.tool = step.end
+                arm.z_mm = step.end_z
+                reach = self.kinematics[step.arm].inverse(arm.tool, arm.pose)
+                if reach.reachable:
+                    arm.pose = reach.pose
+                if step.on_end:
+                    step.on_end()
+                self.active_step = None
+                continue
+            if self.plan_queue:
+                self._start_next_step()
+                continue
+            if self.pending_plan:
+                self._commit_pending_plan()
+                if self.step_once:
+                    self.step_once = False
+                    self.paused = True
+                break
+        self.stats.message = "Skipped current animation"
 
     def reset_now(self) -> None:
         if self.board == chess.Board() and not self.plan_queue and not self.active_step:
@@ -118,21 +180,33 @@ class VisualChessRobotSimulator:
             return
         self.plan_queue.clear()
         self.active_step = None
+        self.game_over_delay_s = 0.0
         self._try_queue_reset()
+        self.stats.message = "Reset requested"
 
     def _queue_next_plan(self) -> None:
         if self.options.max_plies is not None and self.stats.plies >= self.options.max_plies:
             self.stats.mode = "max plies reached"
-            self.game_over_delay_s = 2.0
-            self._try_queue_reset()
+            self.stats.message = "Max plies reached"
+            if self.options.auto_loop:
+                self.game_over_delay_s = 2.0
+                self._try_queue_reset()
+            else:
+                self.paused = True
+                self.stats.message = "Max plies — press Reset / Next game or enable Auto-loop"
             return
 
         if self.board.is_game_over(claim_draw=True):
             result = self.board.result(claim_draw=True)
+            self.stats.last_result = result
             self.stats.mode = f"game over {result}"
-            self.stats.message = "Resetting board for the next loop"
-            self.game_over_delay_s = 1.2
-            self._try_queue_reset()
+            if self.options.auto_loop:
+                self.stats.message = "Game over — auto-resetting for next loop"
+                self.game_over_delay_s = 1.2
+                self._try_queue_reset()
+            else:
+                self.paused = True
+                self.stats.message = f"Game over {result} — press Next game or enable Auto-loop"
             return
 
         player_name = self._player_name_for_turn()
@@ -150,8 +224,15 @@ class VisualChessRobotSimulator:
                 continue
             self.pending_plan = plan
             self.pending_plan_is_reset = False
+            try:
+                san = self.board.san(move)
+            except ValueError:
+                san = move.uci()
             self.stats.last_move = move.uci()
-            self.stats.mode = f"{'White' if self.board.turn else 'Black'} to move"
+            self.stats.last_move_san = san
+            self.stats.path_skips += skipped
+            side = "White" if self.board.turn else "Black"
+            self.stats.mode = f"{side} to move"
             self.stats.message = self._describe_move(move)
             if skipped:
                 self.stats.message = f"{self.stats.message} ({skipped} blocked move(s) skipped)"
@@ -208,9 +289,12 @@ class VisualChessRobotSimulator:
         plan_queue.extend(self._parking_steps(virtual_tools))
         self.plan_queue = plan_queue
         self.current_plan_paths = planned_paths
+        self.stats.plan_transfers_total = len(plan.transfers)
+        self.stats.plan_transfers_done = 0
         if is_reset:
             self.stats.mode = "resetting board"
             self.stats.message = f"Reset plan: {len(plan.transfers)} piece transfers"
+            self.stats.last_move_san = "reset"
         elif plan.move:
             self.stats.message = f"Move {plan.move.uci()}: {len(plan.transfers)} physical transfer(s)"
 
@@ -231,6 +315,7 @@ class VisualChessRobotSimulator:
             self.current_locations[token_id] = transfer.destination
             arm.held_token_id = None
             self.stats.completed_transfers += 1
+            self.stats.plan_transfers_done += 1
 
         steps = [
             self._motion(
@@ -295,6 +380,8 @@ class VisualChessRobotSimulator:
         self.active_step = self.plan_queue.pop(0)
         arm = self.arms[self.active_step.arm]
         arm.target_label = self.active_step.label
+        self.stats.active_arm = self.active_step.arm.value
+        self.stats.active_step_label = self.active_step.label
         if self.active_step.on_begin:
             self.active_step.on_begin()
 
@@ -331,11 +418,31 @@ class VisualChessRobotSimulator:
             self.stats.plies = 0
             self.stats.game_number += 1
             self.stats.last_move = "reset complete"
+            self.stats.last_move_san = "—"
+            self.stats.moves_san = []
+            self.stats.path_skips = 0
             self.stats.mode = f"game {self.stats.game_number}"
             self.stats.message = "Board reset; continuing the loop"
+            self.stats.active_arm = "—"
+            self.stats.active_step_label = "idle"
+            self.stats.plan_transfers_total = 0
+            self.stats.plan_transfers_done = 0
         else:
+            move = self.pending_plan.move
+            if move is not None:
+                try:
+                    # SAN must be taken from the pre-push board; expected_board is post-move.
+                    prior = self.board
+                    san = prior.san(move)
+                except ValueError:
+                    san = move.uci()
+                assert self.stats.moves_san is not None
+                self.stats.moves_san.append(san)
+                self.stats.last_move_san = san
             self.board = self.pending_plan.expected_board
             self.stats.plies += 1
+            if self.board.is_game_over(claim_draw=True):
+                self.stats.last_result = self.board.result(claim_draw=True)
         self.pending_plan = None
         self.pending_plan_is_reset = False
 

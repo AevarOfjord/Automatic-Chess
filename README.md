@@ -31,7 +31,7 @@ Preferred entry point:
 .\venv\Scripts\python.exe -m chess_robot visual
 ```
 
-By default the visual simulator uses `stockfish.exe` from this folder. The two sides use different strength settings so games stay varied.
+By default the visual simulator uses `stockfish.exe` from this folder. Both sides use the same strength (≈1700 Elo, skill 10, **1 s** per move) for a fair match.
 
 Useful options:
 
@@ -43,13 +43,21 @@ Useful options:
 .\venv\Scripts\python.exe -m chess_robot visual --random
 ```
 
-Controls inside the simulator:
+### Control board (right panel)
 
-- `Space` pauses/resumes.
-- `N` advances one planned move while paused.
-- `R` requests a board reset.
-- `+` / `-` changes animation speed.
-- `Esc` or `Q` exits.
+Clickable operator controls:
+
+| Control | Action |
+|---------|--------|
+| **Play / Pause** | Run or freeze the twin |
+| **Step** | Advance one planned move |
+| **Skip anim** | Finish the current transfer plan instantly |
+| **Reset / Next game** | Rebuild the physical start position |
+| **Speed** | − / 0.5× / 1× / 2× / 4× / + |
+| **Auto-loop** | After game over, auto-reset and continue (or stop for manual control) |
+| **Paths / Labels** | Toggle path preview and cell names |
+
+Keyboard: `Space` play/pause · `N` step · `S` skip · `R` reset · `L` auto-loop · `P` paths · `+/-` speed · `Esc` quit.
 
 ## Architecture
 

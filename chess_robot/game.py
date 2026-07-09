@@ -20,11 +20,14 @@ from .vision import BoardVision
 log = get_logger("game")
 
 # Shared engine defaults used by GameManager and the visual simulator.
-DEFAULT_WHITE_ELO = 1700
-DEFAULT_BLACK_ELO = 1450
-DEFAULT_WHITE_SKILL = 10
-DEFAULT_BLACK_SKILL = 6
-DEFAULT_MOVE_TIME_S = 0.08
+# Both sides use identical strength for a fair match.
+DEFAULT_ENGINE_ELO = 1700
+DEFAULT_ENGINE_SKILL = 10
+DEFAULT_MOVE_TIME_S = 1.0
+DEFAULT_WHITE_ELO = DEFAULT_ENGINE_ELO
+DEFAULT_BLACK_ELO = DEFAULT_ENGINE_ELO
+DEFAULT_WHITE_SKILL = DEFAULT_ENGINE_SKILL
+DEFAULT_BLACK_SKILL = DEFAULT_ENGINE_SKILL
 
 
 class Player(Protocol):
@@ -44,8 +47,8 @@ class EngineProfile:
 
 
 DEFAULT_PROFILES = (
-    EngineProfile("Stockfish White", DEFAULT_WHITE_ELO, DEFAULT_WHITE_SKILL, DEFAULT_MOVE_TIME_S),
-    EngineProfile("Stockfish Black", DEFAULT_BLACK_ELO, DEFAULT_BLACK_SKILL, DEFAULT_MOVE_TIME_S),
+    EngineProfile("Stockfish White", DEFAULT_ENGINE_ELO, DEFAULT_ENGINE_SKILL, DEFAULT_MOVE_TIME_S),
+    EngineProfile("Stockfish Black", DEFAULT_ENGINE_ELO, DEFAULT_ENGINE_SKILL, DEFAULT_MOVE_TIME_S),
 )
 
 
