@@ -4,7 +4,15 @@ Software-first build for two opposing SCARA chess robots. The PC is the big brai
 
 Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess) · License: [MIT](LICENSE)
 
-The physical board model is a 12 column × 8 row magnetic grid. Each cell is 50 mm × 50 mm. The center 8 columns are the playable chessboard, while the 2 left columns store `W1...W16` and the 2 right columns store `B1...B16`.
+The physical board model is a 12 × 8 magnetic grid (50 mm cells):
+
+| Region | Columns | Labels |
+|--------|---------|--------|
+| White dead rack | **C1–C2** | **W1…W16** (top → bottom) |
+| Chessboard | **C3–C10** | **a1…h8** (files a–h, ranks 1–8 bottom → top) |
+| Black dead rack | **C11–C12** | **B1…B16** (top → bottom) |
+
+Table rows are **R1…R8** bottom → top (same direction as chess ranks and +Y mm).
 
 ## Setup
 

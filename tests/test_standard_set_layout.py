@@ -52,6 +52,30 @@ class StandardSetLayoutTests(unittest.TestCase):
         self.assertEqual(layout.dead_slot(ArmId.WHITE, 0).x_mm, 25.0)
         self.assertEqual(layout.dead_slot(ArmId.BLACK, 15).x_mm, 575.0)
 
+    def test_grid_cell_names_use_chess_and_rack_labels(self) -> None:
+        layout = BoardLayout(RobotConfig())
+
+        # Axes: C1…C12 left→right, R1…R8 bottom→top (same sense as chess ranks).
+        self.assertEqual(layout.column_label(0), "C1")
+        self.assertEqual(layout.column_label(11), "C12")
+        self.assertEqual(layout.row_label(0), "R1")
+        self.assertEqual(layout.row_label(7), "R8")
+
+        # Play area sits on C3–C10; bottom-left chess square is a1.
+        self.assertEqual(layout.chess_start_col, 2)
+        self.assertEqual(layout.cell_label(2, 0), "a1")
+        self.assertEqual(layout.cell_label(9, 7), "h8")
+        self.assertEqual(layout.cell_label(5, 3), "d4")
+
+        # Dead racks: W1 at top of white columns C1–C2; B1 at top of C11–C12.
+        self.assertEqual(layout.cell_label(0, 7), "W1")  # C1, R8
+        self.assertEqual(layout.cell_label(1, 7), "W2")  # C2, R8
+        self.assertEqual(layout.cell_label(0, 6), "W3")
+        self.assertEqual(layout.cell_label(10, 7), "B1")
+        self.assertEqual(layout.cell_label(11, 0), "B16")
+        self.assertEqual(layout.dead_slot_at_cell(0, 7), (ArmId.WHITE, 0))
+        self.assertIsNone(layout.dead_slot_at_cell(2, 0))
+
     def test_capture_goes_to_capturing_arm_dead_line(self) -> None:
         board = chess.Board()
         inventory = PhysicalInventory()

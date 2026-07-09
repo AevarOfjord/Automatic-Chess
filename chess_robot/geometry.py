@@ -40,10 +40,77 @@ class Reachability:
 
 
 class BoardLayout:
-    """Maps named chess/inventory locations into the shared millimetre frame."""
+    """Maps named chess/inventory locations into the shared millimetre frame.
+
+    Grid naming (all 0-based indices converted to 1-based labels):
+
+    - **Table columns** ``C1…C12`` left → right (+X).
+    - **Table rows** ``R1…R8`` bottom → top (+Y), same sense as chess ranks.
+    - **Chess play area** occupies ``C3…C10`` = files ``a…h``, ranks ``1…8``.
+    - **White dead rack** ``C1–C2`` labeled ``W1…W16`` (fills top → bottom).
+    - **Black dead rack** ``C11–C12`` labeled ``B1…B16`` (fills top → bottom).
+    """
 
     def __init__(self, config: RobotConfig):
         self.config = config
+
+    @property
+    def chess_start_col(self) -> int:
+        """0-based table column of chess file a."""
+        return round(self.config.board_origin_x_mm / self.config.square_size_mm)
+
+    @property
+    def chess_end_col(self) -> int:
+        """0-based exclusive end column of the chess area."""
+        return self.chess_start_col + self.config.board_squares
+
+    def column_label(self, table_col: int) -> str:
+        """Human label for a 0-based table column (``C1``…``C12``)."""
+        if not 0 <= table_col < self.config.table_columns:
+            raise ValueError(f"table column out of range: {table_col}")
+        return f"C{table_col + 1}"
+
+    def row_label(self, row_from_bottom: int) -> str:
+        """Human label for a 0-based row from the bottom (``R1``…``R8``)."""
+        if not 0 <= row_from_bottom < self.config.table_rows:
+            raise ValueError(f"table row out of range: {row_from_bottom}")
+        return f"R{row_from_bottom + 1}"
+
+    def chess_square_name(self, table_col: int, row_from_bottom: int) -> str | None:
+        """Return ``a1``…``h8`` if this cell is on the playable board, else ``None``."""
+        if not self.chess_start_col <= table_col < self.chess_end_col:
+            return None
+        if not 0 <= row_from_bottom < self.config.board_squares:
+            return None
+        file_index = table_col - self.chess_start_col
+        return chess.square_name(chess.square(file_index, row_from_bottom))
+
+    def dead_slot_at_cell(self, table_col: int, row_from_bottom: int) -> tuple[ArmId, int] | None:
+        """Return ``(arm, 0-based index)`` if the cell is a dead-rack slot."""
+        row_from_top = self.config.table_rows - 1 - row_from_bottom
+        # White rack: C1–C2 (columns 0–1), Black rack: C11–C12.
+        if 0 <= table_col <= 1:
+            arm = ArmId.WHITE
+            col_in_rack = table_col
+        elif self.config.table_columns - 2 <= table_col < self.config.table_columns:
+            arm = ArmId.BLACK
+            col_in_rack = table_col - (self.config.table_columns - 2)
+        else:
+            return None
+        index = row_from_top * 2 + col_in_rack
+        if not 0 <= index < DEAD_SLOTS_PER_ARM:
+            return None
+        return arm, index
+
+    def cell_label(self, table_col: int, row_from_bottom: int) -> str:
+        """Primary display name for a table cell (chess square or W/B rack id)."""
+        chess_name = self.chess_square_name(table_col, row_from_bottom)
+        if chess_name is not None:
+            return chess_name
+        dead = self.dead_slot_at_cell(table_col, row_from_bottom)
+        if dead is not None:
+            return dead_label(dead[0], dead[1])
+        return f"{self.column_label(table_col)}{self.row_label(row_from_bottom)}"
 
     def square(self, square_name: str) -> Point:
         square = chess.parse_square(square_name)
@@ -61,11 +128,12 @@ class BoardLayout:
     def dead_slot(self, arm: ArmId, index: int) -> Point:
         if not 0 <= index < DEAD_SLOTS_PER_ARM:
             raise ValueError(f"dead-piece slot out of range: {index}")
-        row, col = divmod(index, 2)
-        table_col = col if arm is ArmId.WHITE else self.config.table_columns - 2 + col
-        table_row_from_top = row
+        # Fill order: W1/B1 at the top of the rack, two columns, left-to-right within a row.
+        row_from_top, col_in_rack = divmod(index, 2)
+        table_col = col_in_rack if arm is ArmId.WHITE else self.config.table_columns - 2 + col_in_rack
+        row_from_bottom = self.config.table_rows - 1 - row_from_top
         x = (table_col + 0.5) * self.config.square_size_mm
-        y = (self.config.table_rows - table_row_from_top - 0.5) * self.config.square_size_mm
+        y = (row_from_bottom + 0.5) * self.config.square_size_mm
         return Point(x, y)
 
     def capture_slot(self, arm: ArmId, index: int) -> Point:

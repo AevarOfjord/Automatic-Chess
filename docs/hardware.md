@@ -29,6 +29,16 @@ PC  --USB serial JSON-->  ESP32 Gateway  --ESP-NOW-->  WHITE arm ESP32
 4. Calibrate `J1_STEPS_PER_DEG` / `J2_STEPS_PER_DEG` for your gearing and microstepping.
 5. Park poses and base positions in `chess_robot/config.py` must match the physical table (600×400 mm grid, 50 mm cells).
 
+### Grid labels (mark these on the table)
+
+| Region | Columns | Cell names |
+|--------|---------|------------|
+| White dead rack | C1–C2 | W1…W16 (W1 at top) |
+| Chess play area | C3–C10 | a1…h8 (a1 near White base / bottom) |
+| Black dead rack | C11–C12 | B1…B16 (B1 at top) |
+
+Rows **R1…R8** run bottom → top (same as chess ranks). Columns **C1…C12** run left → right.
+
 ## PC serial settings
 
 Default in `RobotConfig`:
