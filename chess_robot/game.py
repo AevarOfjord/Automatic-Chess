@@ -248,7 +248,7 @@ class GameManager:
         return self.board.result(claim_draw=True)
 
     def reset_board(self) -> None:
-        self.execute_plan(self.reset_planner.plan(self.inventory))
+        self.execute_plan(self.reset_planner.plan_pathable(self.inventory, self.path_planner))
 
     def run_endless(self, pause_s: float = 2.0) -> None:
         self.initialize()

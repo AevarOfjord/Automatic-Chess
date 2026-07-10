@@ -70,12 +70,14 @@ class VisualChessRobotSimulator:
         self.arms: dict[ArmId, VisualArm] = {}
         for arm in ArmId:
             park = self.layout.park(arm)
-            pose = self.kinematics[arm].inverse(park).pose
+            cfg = self.config.arm(arm)
+            pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
             self.arms[arm] = VisualArm(
                 arm_id=arm,
                 tool=park,
                 pose=pose,
                 z_mm=self.config.arm(arm).fixed_tool_z_mm,
+                target_label="folded home",
             )
 
     def close(self) -> None:
@@ -156,9 +158,12 @@ class VisualChessRobotSimulator:
                 arm = self.arms[step.arm]
                 arm.tool = step.end
                 arm.z_mm = step.end_z
-                reach = self.kinematics[step.arm].inverse(arm.tool, arm.pose)
-                if reach.reachable:
-                    arm.pose = reach.pose
+                if step.end_pose is not None:
+                    arm.pose = step.end_pose
+                else:
+                    reach = self.kinematics[step.arm].inverse(arm.tool, arm.pose)
+                    if reach.reachable:
+                        arm.pose = reach.pose
                 if step.on_end:
                     step.on_end()
                 self.active_step = None
@@ -244,10 +249,10 @@ class VisualChessRobotSimulator:
         raise TrajectoryPlanningError(self.stats.message)
 
     def _try_queue_reset(self) -> None:
-        plan = self.reset_planner.plan(self.inventory)
         try:
+            plan = self.reset_planner.plan_pathable(self.inventory, self.puck_planner)
             self._enqueue_plan(plan, is_reset=True)
-        except TrajectoryPlanningError as exc:
+        except (RuntimeError, TrajectoryPlanningError) as exc:
             self.pending_plan = None
             self.pending_plan_is_reset = False
             self.plan_queue.clear()
@@ -265,13 +270,13 @@ class VisualChessRobotSimulator:
         virtual_tools = {arm_id: arm.tool for arm_id, arm in self.arms.items()}
         physical_state = self.inventory.clone()
         for transfer in plan.transfers:
-            # Keep-out: opposite arm returns to park before this arm works.
+            # Keep-out: opposite arm returns to its folded home before this arm works.
             opposite = transfer.arm.opposite
             park = self.layout.park(opposite)
             if self._distance(virtual_tools[opposite], park) > 1.0:
                 fixed_z = self.config.arm(opposite).fixed_tool_z_mm
                 plan_queue.append(
-                    self._motion(opposite, "keep-out park", virtual_tools[opposite], park, fixed_z, fixed_z)
+                    self._home_motion(opposite, "keep-out folded home", virtual_tools[opposite], park, fixed_z)
                 )
                 virtual_tools[opposite] = park
             planned_path = self.puck_planner.plan_transfer(
@@ -317,6 +322,12 @@ class VisualChessRobotSimulator:
             self.stats.completed_transfers += 1
             self.stats.plan_transfers_done += 1
 
+        def magnet_on() -> None:
+            arm.magnet_on = True
+
+        def magnet_off() -> None:
+            arm.magnet_on = False
+
         steps = [
             self._motion(
                 transfer.arm,
@@ -333,8 +344,9 @@ class VisualChessRobotSimulator:
                 source,
                 fixed_z,
                 fixed_z,
-                0.18,
-                on_begin=pick,
+                self.config.magnet_pickup_settle_s,
+                on_begin=magnet_on,
+                on_end=pick,
             ),
         ]
         for index, (a, b) in enumerate(zip(carry_path, carry_path[1:]), start=1):
@@ -347,7 +359,8 @@ class VisualChessRobotSimulator:
                 destination,
                 fixed_z,
                 fixed_z,
-                0.18,
+                self.config.magnet_release_settle_s,
+                on_begin=magnet_off,
                 on_end=drop,
             )
         )
@@ -360,8 +373,30 @@ class VisualChessRobotSimulator:
             fixed_z = self.config.arm(arm_id).fixed_tool_z_mm
             start = virtual_tools[arm_id]
             if self._distance(start, park) > 1.0:
-                steps.append(self._motion(arm_id, "park", start, park, arm.z_mm, fixed_z))
+                steps.append(self._home_motion(arm_id, "folded home", start, park, fixed_z))
         return steps
+
+    def _home_motion(
+        self, arm_id: ArmId, label: str, start: Point, end: Point, fixed_z: float
+    ) -> AnimationStep:
+        cfg = self.config.arm(arm_id)
+        current_pose = self.arms[arm_id].pose
+        home_pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
+        joint_distance = 180.0
+        if current_pose is not None:
+            joint_distance = abs(home_pose.shoulder_deg - current_pose.shoulder_deg) + abs(
+                home_pose.elbow_deg - current_pose.elbow_deg
+            )
+        return AnimationStep(
+            arm_id,
+            label,
+            start,
+            end,
+            fixed_z,
+            fixed_z,
+            max(0.2, joint_distance / 240.0),
+            end_pose=home_pose,
+        )
 
     def _motion(
         self,
@@ -393,17 +428,34 @@ class VisualChessRobotSimulator:
         t = min(1.0, step.elapsed_s / max(step.duration_s, 0.001))
         eased = t * t * (3.0 - 2.0 * t)
         arm = self.arms[step.arm]
-        arm.tool = Point(
-            step.start.x_mm + (step.end.x_mm - step.start.x_mm) * eased,
-            step.start.y_mm + (step.end.y_mm - step.start.y_mm) * eased,
-        )
+        if step.end_pose is not None:
+            if step.start_pose is None:
+                step.start_pose = arm.pose
+            if step.start_pose is not None:
+                arm.pose = JointPose(
+                    step.start_pose.shoulder_deg
+                    + (step.end_pose.shoulder_deg - step.start_pose.shoulder_deg) * eased,
+                    step.start_pose.elbow_deg
+                    + (step.end_pose.elbow_deg - step.start_pose.elbow_deg) * eased,
+                )
+                arm.tool = self.forward_kinematics(step.arm, arm.pose)[2]
+            else:
+                arm.tool = step.end
+        else:
+            arm.tool = Point(
+                step.start.x_mm + (step.end.x_mm - step.start.x_mm) * eased,
+                step.start.y_mm + (step.end.y_mm - step.start.y_mm) * eased,
+            )
         arm.z_mm = step.start_z + (step.end_z - step.start_z) * eased
-        reach = self.kinematics[step.arm].inverse(arm.tool, arm.pose)
-        if reach.reachable:
-            arm.pose = reach.pose
+        if step.end_pose is None:
+            reach = self.kinematics[step.arm].inverse(arm.tool, arm.pose)
+            if reach.reachable:
+                arm.pose = reach.pose
         if t >= 1.0:
             arm.tool = step.end
             arm.z_mm = step.end_z
+            if step.end_pose is not None:
+                arm.pose = step.end_pose
             if step.on_end:
                 step.on_end()
             self.active_step = None

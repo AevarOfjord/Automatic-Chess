@@ -26,12 +26,14 @@ class MockGatewayTransport(GatewayTransport):
     def __init__(self) -> None:
         self.completed: dict[str, ArmResponse] = {}
         self.execution_count: dict[str, int] = {}
+        self.commands: list[ArmCommand] = []
         self.fail_next: str | None = None
         self.stopped = False
 
     def exchange(self, command: ArmCommand, timeout_s: float) -> ArmResponse:
         if command.command_id in self.completed:
             return self.completed[command.command_id]
+        self.commands.append(command)
         self.execution_count[command.command_id] = self.execution_count.get(command.command_id, 0) + 1
         if self.fail_next:
             detail, self.fail_next = self.fail_next, None

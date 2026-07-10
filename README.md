@@ -108,9 +108,14 @@ Captured pieces are placed deterministically, never randomly.
 
 ```powershell
 .\venv\Scripts\python.exe -m chess_robot reachability
+.\venv\Scripts\python.exe -m chess_robot optimize-geometry
 .\venv\Scripts\python.exe -m chess_robot simulate --random --games 1 --max-plies 40
 .\venv\Scripts\python.exe -m unittest discover -v
 ```
+
+`optimize-geometry` searches the agreed mirrored 270-degree SCARA design space and writes
+`runtime_data/geometry_optimization.json`. It certifies every 1 mm operational grid point and each
+horizontal, vertical, and diagonal neighboring-grid route before reporting a candidate.
 
 ## Docs
 

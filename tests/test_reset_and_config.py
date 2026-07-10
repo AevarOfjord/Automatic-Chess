@@ -21,6 +21,8 @@ class ConfigEnvTests(unittest.TestCase):
                 "CHESS_ROBOT_BAUD": "57600",
                 "CHESS_ROBOT_TIMEOUT_S": "12.5",
                 "CHESS_ROBOT_RETRIES": "2",
+                "CHESS_ROBOT_PICKUP_SETTLE_S": "0.35",
+                "CHESS_ROBOT_RELEASE_SETTLE_S": "0.65",
                 "CHESS_ROBOT_JOURNAL": "runtime_data/custom.jsonl",
             },
             clear=False,
@@ -30,6 +32,8 @@ class ConfigEnvTests(unittest.TestCase):
         self.assertEqual(config.serial_baudrate, 57600)
         self.assertEqual(config.response_timeout_s, 12.5)
         self.assertEqual(config.command_retries, 2)
+        self.assertEqual(config.magnet_pickup_settle_s, 0.35)
+        self.assertEqual(config.magnet_release_settle_s, 0.65)
         self.assertEqual(config.journal_path, Path("runtime_data/custom.jsonl"))
 
 
@@ -56,6 +60,31 @@ class MidgameResetTests(unittest.TestCase):
                         manager.inventory.location_of(token.token_id),
                         f"board:{token.original_square}",
                     )
+            finally:
+                manager.close()
+
+    def test_path_aware_reset_keeps_every_transfer_collision_free(self) -> None:
+        """Crowded mid-game resets must not fail just because one route is blocked."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config = RobotConfig(journal_path=Path(tmp) / "j.jsonl")
+            manager = GameManager(
+                config=config,
+                use_mock_hardware=True,
+                use_random_players=True,
+                seed=13,
+            )
+            manager.initialize()
+            try:
+                for _ in range(12):
+                    manager.execute_move(manager.select_executable_move())
+                plan = manager.reset_planner.plan_pathable(manager.inventory, manager.path_planner)
+                state = manager.inventory.clone()
+                for transfer in plan.transfers:
+                    manager.path_planner.plan_transfer(
+                        state, transfer.token_id, transfer.source, transfer.destination
+                    )
+                    state.move(transfer.token_id, transfer.destination)
+                state.assert_matches(chess.Board())
             finally:
                 manager.close()
 

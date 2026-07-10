@@ -155,32 +155,33 @@ class PuckTrajectoryPlanner:
     def _candidate_points(self, start: Point, end: Point, obstacles: list[Obstacle]) -> list[Point]:
         points = [start, end]
         step = self.config.square_size_mm
-        min_x = self.puck.puck_radius_mm
-        max_x = self.config.table_width_mm - self.puck.puck_radius_mm
-        min_y = self.puck.puck_radius_mm
-        max_y = self.config.table_height_mm - self.puck.puck_radius_mm
+        ox, oy = self.config.table_origin_x_mm, self.config.table_origin_y_mm
+        min_x = ox + self.puck.puck_radius_mm
+        max_x = ox + self.config.table_width_mm - self.puck.puck_radius_mm
+        min_y = oy + self.puck.puck_radius_mm
+        max_y = oy + self.config.table_height_mm - self.puck.puck_radius_mm
 
         for col in range(self.config.table_columns):
             for row in range(self.config.table_rows):
-                point = Point((col + 0.5) * step, (row + 0.5) * step)
+                point = Point(ox + (col + 0.5) * step, oy + (row + 0.5) * step)
                 if self.point_clear(point, obstacles):
                     points.append(point)
 
         for col in range(1, self.config.table_columns):
             for row in range(1, self.config.table_rows):
-                point = Point(col * step, row * step)
+                point = Point(ox + col * step, oy + row * step)
                 if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
                     if self.point_clear(point, obstacles):
                         points.append(point)
 
         for col in range(self.config.table_columns):
-            x = (col + 0.5) * step
+            x = ox + (col + 0.5) * step
             for y in (min_y, max_y):
                 point = Point(x, y)
                 if self.point_clear(point, obstacles):
                     points.append(point)
         for row in range(self.config.table_rows):
-            y = (row + 0.5) * step
+            y = oy + (row + 0.5) * step
             for x in (min_x, max_x):
                 point = Point(x, y)
                 if self.point_clear(point, obstacles):
@@ -193,13 +194,13 @@ class PuckTrajectoryPlanner:
 
         for col in range(self.config.table_columns * 2 + 1):
             for row in (0, self.config.table_rows * 2):
-                point = Point(col * step / 2.0, row * step / 2.0)
+                point = Point(ox + col * step / 2.0, oy + row * step / 2.0)
                 if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
                     if self.point_clear(point, obstacles):
                         points.append(point)
         for row in range(self.config.table_rows * 2 + 1):
             for col in (0, self.config.table_columns * 2):
-                point = Point(col * step / 2.0, row * step / 2.0)
+                point = Point(ox + col * step / 2.0, oy + row * step / 2.0)
                 if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
                     if self.point_clear(point, obstacles):
                         points.append(point)

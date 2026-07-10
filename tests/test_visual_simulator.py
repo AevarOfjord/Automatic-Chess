@@ -9,11 +9,15 @@ class VisualSimulatorTests(unittest.TestCase):
     def test_visual_simulator_advances_moves_and_resets(self) -> None:
         simulator = VisualChessRobotSimulator(options=VisualOptions(seed=3, max_plies=4, speed=10.0))
 
-        for _ in range(2500):
+        # Stop after one full reset. Letting the auto-loop run hundreds of
+        # simulated games turns a unit check into an expensive stress test.
+        for _ in range(800):
             simulator.tick(0.05)
+            if simulator.stats.game_number >= 2:
+                break
 
         self.assertGreaterEqual(simulator.stats.completed_transfers, 4)
-        self.assertGreaterEqual(simulator.stats.game_number, 1)
+        self.assertGreaterEqual(simulator.stats.game_number, 2)
         self.assertLessEqual(simulator.stats.plies, 4)
         self.assertTrue(simulator.stats.last_move)
 
@@ -42,6 +46,10 @@ class VisualSimulatorTests(unittest.TestCase):
         labels = [step.label for step in simulator.plan_queue]
         z_values = {(step.start_z, step.end_z) for step in simulator.plan_queue}
         self.assertIn("magnet on / pickup", labels)
+        pickup = next(step for step in simulator.plan_queue if step.label == "magnet on / pickup")
+        self.assertEqual(pickup.duration_s, simulator.config.magnet_pickup_settle_s)
+        release = next(step for step in simulator.plan_queue if step.label == "magnet off / release")
+        self.assertEqual(release.duration_s, simulator.config.magnet_release_settle_s)
         self.assertTrue(any(label.startswith("planar carry") for label in labels))
         self.assertNotIn("lower tool", labels)
         self.assertNotIn("lift piece", labels)

@@ -74,6 +74,10 @@ class DualArmHardware:
             raise MotionFault(f"{arm.value} cannot reach {label}: {result.reason}")
         return result.pose
 
+    def _home_pose(self, arm: ArmId) -> JointPose:
+        cfg = self.config.arm(arm)
+        return JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
+
     def _trajectory(self, arm: ArmId, points: list[tuple[JointPose, float]]) -> None:
         # Compact waypoint arrays keep each command inside the conservative ESP-NOW payload limit.
         for index in range(0, len(points), 4):
@@ -83,13 +87,25 @@ class DualArmHardware:
             self.last_pose[arm] = chunk[-1][0]
             self.parked[arm] = False
 
+    def _set_magnet(self, arm: ArmId, *, on: bool, settle_s: float) -> ArmResponse:
+        """Switch the magnet and wait for its on-arm settle period.
+
+        The controller keeps the arm stationary and only returns DONE after
+        the requested time. This is safer than a PC-side sleep: a delayed USB
+        packet cannot accidentally shorten the pickup or release dwell.
+        """
+        settle_ms = max(0, min(3_000, round(settle_s * 1_000)))
+        return self._send(
+            ArmCommand(arm, Action.SET_MAGNET, {"on": on, "settle_ms": settle_ms})
+        )
+
     def _is_near_park(self, arm: ArmId) -> bool:
         if self.parked[arm]:
             return True
         pose = self.last_pose[arm]
         if pose is None:
             return False
-        park_pose = self._pose(arm, f"park:{arm.value}")
+        park_pose = self._home_pose(arm)
         return (
             math.hypot(pose.shoulder_deg - park_pose.shoulder_deg, pose.elbow_deg - park_pose.elbow_deg)
             < 1.5
@@ -185,7 +201,7 @@ class DualArmHardware:
 
     def park(self, arm: ArmId) -> None:
         cfg = self.config.arm(arm)
-        pose = self._pose(arm, f"park:{arm.value}")
+        pose = self._home_pose(arm)
         self._send(ArmCommand(arm, Action.PARK, {"p": pose.as_wire(cfg.fixed_tool_z_mm)}))
         self.last_pose[arm] = pose
         self.parked[arm] = True
@@ -214,7 +230,7 @@ class DualArmHardware:
         cfg = self.config.arm(arm)
         source_pose = self._pose(arm, source)
         destination_pose = self._pose(arm, destination)
-        park_pose = self._pose(arm, f"park:{arm.value}")
+        park_pose = self._home_pose(arm)
         try:
             path_points = self._plan_path_points(arm, source, destination, inventory, token_id)
         except TrajectoryPlanningError as exc:
@@ -234,11 +250,19 @@ class DualArmHardware:
                     (source_pose, cfg.fixed_tool_z_mm),
                 ],
             )
-            pickup = self._send(ArmCommand(arm, Action.SET_MAGNET, {"on": True}))
+            pickup = self._set_magnet(
+                arm,
+                on=True,
+                settle_s=self.config.magnet_pickup_settle_s,
+            )
             if pickup.telemetry.get("pickup") is False:
                 raise MotionFault(f"{arm.value} pickup sensor did not detect a piece at {source}")
             self._trajectory(arm, carry_poses or [(destination_pose, cfg.fixed_tool_z_mm)])
-            self._send(ArmCommand(arm, Action.SET_MAGNET, {"on": False}))
+            self._set_magnet(
+                arm,
+                on=False,
+                settle_s=self.config.magnet_release_settle_s,
+            )
             self.park(arm)
 
     def close(self) -> None:

@@ -115,9 +115,11 @@ class BoardLayout:
     def square(self, square_name: str) -> Point:
         square = chess.parse_square(square_name)
         return Point(
-            self.config.board_origin_x_mm
+            self.config.table_origin_x_mm
+            + self.config.board_origin_x_mm
             + (chess.square_file(square) + 0.5) * self.config.square_size_mm,
-            self.config.board_origin_y_mm
+            self.config.table_origin_y_mm
+            + self.config.board_origin_y_mm
             + (chess.square_rank(square) + 0.5) * self.config.square_size_mm,
         )
 
@@ -132,8 +134,8 @@ class BoardLayout:
         row_from_top, col_in_rack = divmod(index, 2)
         table_col = col_in_rack if arm is ArmId.WHITE else self.config.table_columns - 2 + col_in_rack
         row_from_bottom = self.config.table_rows - 1 - row_from_top
-        x = (table_col + 0.5) * self.config.square_size_mm
-        y = (row_from_bottom + 0.5) * self.config.square_size_mm
+        x = self.config.table_origin_x_mm + (table_col + 0.5) * self.config.square_size_mm
+        y = self.config.table_origin_y_mm + (row_from_bottom + 0.5) * self.config.square_size_mm
         return Point(x, y)
 
     def capture_slot(self, arm: ArmId, index: int) -> Point:
@@ -144,7 +146,9 @@ class BoardLayout:
         return dead_label(arm, index)
 
     def buffer(self, arm: ArmId) -> Point:
-        return Point(-50.0, 200.0) if arm is ArmId.WHITE else Point(450.0, 200.0)
+        # Table-relative staging points just off the board's left/right edge.
+        ox, oy = self.config.table_origin_x_mm, self.config.table_origin_y_mm
+        return Point(ox - 50.0, oy + 200.0) if arm is ArmId.WHITE else Point(ox + 450.0, oy + 200.0)
 
     def location(self, name: str) -> Point:
         parts = name.split(":")
@@ -176,6 +180,30 @@ class ScaraKinematics:
     def _within(value: float, limits: tuple[float, float]) -> bool:
         return limits[0] <= value <= limits[1]
 
+    @staticmethod
+    def _equivalent_angles(angle_deg: float, limits: tuple[float, float]) -> list[float]:
+        """Return motor-space copies of an angle that fit one travel window."""
+        low, high = limits
+        first = math.ceil((low - angle_deg) / 360.0)
+        last = math.floor((high - angle_deg) / 360.0)
+        return [angle_deg + 360.0 * turns for turns in range(first, last + 1)]
+
+    @staticmethod
+    def _singularity_distance_deg(elbow_deg: float) -> float:
+        """Distance from straight (0) or folded (+/-180) SCARA singularities."""
+        wrapped = (elbow_deg + 180.0) % 360.0 - 180.0
+        return min(abs(wrapped), abs(abs(wrapped) - 180.0))
+
+    def _joint_headroom_deg(self, pose: JointPose) -> float:
+        shoulder_low, shoulder_high = self.config.shoulder_limits_deg
+        elbow_low, elbow_high = self.config.elbow_limits_deg
+        return min(
+            pose.shoulder_deg - shoulder_low,
+            shoulder_high - pose.shoulder_deg,
+            pose.elbow_deg - elbow_low,
+            elbow_high - pose.elbow_deg,
+        )
+
     def inverse(self, point: Point, preferred: JointPose | None = None) -> Reachability:
         dx = point.x_mm - self.config.base_x_mm
         dy = point.y_mm - self.config.base_y_mm
@@ -187,30 +215,39 @@ class ScaraKinematics:
         if cos_elbow < -1.000001 or cos_elbow > 1.000001:
             return Reachability(False, None, "outside radial workspace")
         cos_elbow = max(-1.0, min(1.0, cos_elbow))
-        candidates: list[tuple[JointPose, float]] = []
+        candidates: list[tuple[JointPose, float, float]] = []
         for elbow_rad in (math.acos(cos_elbow), -math.acos(cos_elbow)):
             shoulder_rad = math.atan2(y, x) - math.atan2(
                 l2 * math.sin(elbow_rad), l1 + l2 * math.cos(elbow_rad)
             )
-            pose = JointPose(math.degrees(shoulder_rad), math.degrees(elbow_rad))
-            margin = abs(math.sin(elbow_rad))
-            if self._within(pose.shoulder_deg, self.config.shoulder_limits_deg) and self._within(
-                pose.elbow_deg, self.config.elbow_limits_deg
-            ):
-                distance = 0.0
-                if preferred:
-                    distance = abs(pose.shoulder_deg - preferred.shoulder_deg) + abs(
-                        pose.elbow_deg - preferred.elbow_deg
-                    )
-                candidates.append((pose, distance))
+            shoulder_deg = math.degrees(shoulder_rad)
+            elbow_deg = math.degrees(elbow_rad)
+            for motor_shoulder in self._equivalent_angles(shoulder_deg, self.config.shoulder_limits_deg):
+                for motor_elbow in self._equivalent_angles(elbow_deg, self.config.elbow_limits_deg):
+                    pose = JointPose(motor_shoulder, motor_elbow)
+                    headroom = self._joint_headroom_deg(pose)
+                    singularity_distance = self._singularity_distance_deg(motor_elbow)
+                    if headroom < self.config.joint_limit_margin_deg:
+                        continue
+                    if singularity_distance < self.config.singularity_margin_deg:
+                        continue
+                    distance = 0.0
+                    if preferred:
+                        distance = abs(pose.shoulder_deg - preferred.shoulder_deg) + abs(
+                            pose.elbow_deg - preferred.elbow_deg
+                        )
+                    candidates.append((pose, distance, singularity_distance))
         if not candidates:
-            return Reachability(False, None, "joint limits")
-        candidates.sort(key=lambda item: (-item[0].elbow_deg, item[1]))
-        pose = min(candidates, key=lambda item: item[1] if preferred else -item[0].elbow_deg)[0]
-        margin = abs(math.sin(math.radians(pose.elbow_deg)))
-        if margin < 0.08:
-            return Reachability(False, pose, "too close to a singular pose", margin)
-        return Reachability(True, pose, singularity_margin=margin)
+            return Reachability(False, None, "joint limits or safety margin")
+        pose, _, singularity_distance = min(
+            candidates,
+            key=lambda item: item[1] if preferred else -min(self._joint_headroom_deg(item[0]), item[2]),
+        )
+        return Reachability(
+            True,
+            pose,
+            singularity_margin=math.sin(math.radians(singularity_distance)),
+        )
 
 
 def validate_layout(config: RobotConfig) -> dict[ArmId, dict[str, Reachability]]:
@@ -218,9 +255,18 @@ def validate_layout(config: RobotConfig) -> dict[ArmId, dict[str, Reachability]]
     report: dict[ArmId, dict[str, Reachability]] = {}
     for arm in ArmId:
         solver = ScaraKinematics(config.arm(arm))
-        report[arm] = {
-            name: solver.inverse(point) for name, point in layout.all_required_locations(arm).items()
-        }
+        report[arm] = {}
+        for name, point in layout.all_required_locations(arm).items():
+            if name == f"park:{arm.value}":
+                cfg = config.arm(arm)
+                report[arm][name] = Reachability(
+                    True,
+                    JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg),
+                    "stowed home",
+                    1.0,
+                )
+            else:
+                report[arm][name] = solver.inverse(point)
     return report
 
 

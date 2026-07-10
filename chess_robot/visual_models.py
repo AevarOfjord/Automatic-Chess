@@ -29,15 +29,19 @@ PIECE_SYMBOLS = {
 @dataclass
 class Viewport:
     # Extra width on the right for the dashboard panel (screen-space overlay).
-    width: int = 1480
-    height: int = 940
-    world_min_x: float = -90.0
-    world_max_x: float = 690.0
-    world_min_y: float = -190.0
-    world_max_y: float = 590.0
+    width: int = 1540
+    height: int = 1000
+    # Y range covers the arm bases at +/-310mm plus room for their labels;
+    # X stays at the table's own extent since base_x is only +/-40mm.
+    world_min_x: float = -390.0
+    world_max_x: float = 390.0
+    world_min_y: float = -410.0
+    world_max_y: float = 410.0
     margin: int = 28
     # Dashboard occupies this many pixels on the right edge of the window.
-    dashboard_width: int = 360
+    # The board render is height-bound (see `scale`), so up to ~540px here
+    # comes out of otherwise-dead horizontal margin, not board size.
+    dashboard_width: int = 520
 
     @property
     def board_area_width(self) -> int:
@@ -66,6 +70,7 @@ class VisualArm:
     pose: JointPose | None = None
     z_mm: float = 0.0
     held_token_id: str | None = None
+    magnet_on: bool = False
     target_label: str = "parked"
 
 
@@ -81,6 +86,8 @@ class AnimationStep:
     on_begin: Callable[[], None] | None = None
     on_end: Callable[[], None] | None = None
     elapsed_s: float = 0.0
+    start_pose: JointPose | None = None
+    end_pose: JointPose | None = None
 
 
 @dataclass
@@ -102,7 +109,6 @@ class VisualOptions:
     auto_loop: bool = True  # after game over, auto-reset and continue
     show_paths: bool = True
     show_cell_labels: bool = True
-    show_arm_labels: bool = True
 
 
 @dataclass

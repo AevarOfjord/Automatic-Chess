@@ -14,6 +14,7 @@ from .game import (
     GameManager,
 )
 from .geometry import unreachable, validate_layout
+from .geometry_optimizer import optimize_geometry, write_report
 from .logging_config import configure_logging
 from .vision import BoardVision
 from .visual_simulator import run_visual_simulator
@@ -106,6 +107,34 @@ def visual_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def optimize_geometry_command(args: argparse.Namespace) -> int:
+    result = optimize_geometry(
+        coarse_grid_mm=args.coarse_grid_mm,
+        final_grid_mm=args.final_grid_mm,
+    )
+    write_report(result, Path(args.output))
+    design = result.design
+    evaluation = result.evaluation
+    print("PASS: certified mirrored SCARA geometry")
+    print(f"Links: {design.link_1_mm:.0f} mm / {design.link_2_mm:.0f} mm")
+    print(
+        "White base: "
+        f"({-design.base_x_mm:.0f}, {-design.base_setback_mm:.0f}) mm; "
+        f"heading {design.forward_angle_deg:.0f} deg"
+    )
+    print(
+        "Joint windows: "
+        f"shoulder {design.shoulder_window_start_deg:.0f}..{design.shoulder_window_start_deg + 270:.0f}, "
+        f"elbow {design.elbow_window_start_deg:.0f}..{design.elbow_window_start_deg + 270:.0f} deg"
+    )
+    print(
+        f"Minimum headroom: {evaluation.min_joint_headroom_deg:.1f} deg; "
+        f"minimum singularity distance: {evaluation.min_singularity_distance_deg:.1f} deg"
+    )
+    print(f"Report: {args.output}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dual-SCARA chess robot controller")
     parser.add_argument(
@@ -118,6 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     reachability_parser = subparsers.add_parser("reachability", help="validate arm geometry")
     reachability_parser.set_defaults(function=reachability_command)
+
+    optimize_parser = subparsers.add_parser(
+        "optimize-geometry",
+        help="search and certify the mirrored SCARA geometry",
+    )
+    optimize_parser.add_argument("--output", default="runtime_data/geometry_optimization.json")
+    optimize_parser.add_argument("--coarse-grid-mm", type=int, default=50)
+    optimize_parser.add_argument("--final-grid-mm", type=int, default=1)
+    optimize_parser.set_defaults(function=optimize_geometry_command)
 
     simulate_parser = subparsers.add_parser("simulate", help="run the full stack with mock hardware")
     simulate_parser.add_argument("--games", type=int, default=1)

@@ -57,6 +57,17 @@ Default in `RobotConfig`:
 
 ## Camera
 
+### Electromagnet timing
+
+Each transfer stops at the source before switching the electromagnet on, then
+holds position for **0.5 seconds**. At the destination it switches the magnet
+off and holds for another **0.5 seconds** before parking. The arm controller
+enforces these settles before it reports `DONE`, so a delayed PC or USB packet
+cannot shorten them.
+
+Tune the defaults only after measured pickup/release trials with
+`CHESS_ROBOT_PICKUP_SETTLE_S` and `CHESS_ROBOT_RELEASE_SETTLE_S`.
+
 ```powershell
 .\venv\Scripts\python.exe -m chess_robot calibrate-camera --output runtime_data/camera_calibration.npz
 ```

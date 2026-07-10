@@ -46,7 +46,7 @@ struct Waypoint {
   uint32_t acceleration;
 };
 
-enum MotionState { IDLE, HOMING, TRAJECTORY, FAULTED };
+enum MotionState { IDLE, HOMING, TRAJECTORY, MAGNET_SETTLING, FAULTED };
 
 FastAccelStepperEngine stepperEngine;
 FastAccelStepper *j1 = nullptr;
@@ -56,6 +56,7 @@ Waypoint waypoints[MAX_WAYPOINTS];
 size_t waypointCount = 0;
 size_t waypointIndex = 0;
 uint32_t stateStartedMs = 0;
+uint32_t magnetSettleMs = 0;
 bool homeDone[2] = {false, false};
 char activeId[20] = "";
 char lastCompletedId[20] = "";
@@ -196,8 +197,19 @@ static void handleCommand(const uint8_t *data, int length) {
     sendStatus(activeId, "FAULT", "home required after fault");
   } else if (strcmp(action, "SET_MAGNET") == 0) {
     digitalWrite(MAGNET_PIN, document["payload"]["on"].as<bool>() ? HIGH : LOW);
-    delay(40);
-    finishCommand();
+    // The PC sends the required pickup/release dwell with this command. Keep
+    // the arm controller busy until it has elapsed so the next trajectory
+    // cannot begin while the puck is still settling under the magnet.
+    magnetSettleMs = document["payload"]["settle_ms"] | 40;
+    if (magnetSettleMs > 3000) {
+      enterFault("magnet settle exceeds limit");
+    } else if (magnetSettleMs == 0) {
+      finishCommand();
+    } else {
+      state = MAGNET_SETTLING;
+      stateStartedMs = millis();
+      sendStatus(activeId, "STARTED");
+    }
   } else if (strcmp(action, "EXECUTE_TRAJECTORY") == 0) {
     if (!loadTrajectory(document["payload"], false)) enterFault("invalid trajectory");
   } else if (strcmp(action, "PARK") == 0) {
@@ -297,6 +309,8 @@ void loop() {
     ++waypointIndex;
     if (waypointIndex >= waypointCount) finishCommand();
     else startWaypoint(waypointIndex);
+  } else if (state == MAGNET_SETTLING && millis() - stateStartedMs >= magnetSettleMs) {
+    finishCommand();
   }
   delay(1);
 }

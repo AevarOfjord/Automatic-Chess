@@ -29,11 +29,11 @@ class StandardSetLayoutTests(unittest.TestCase):
         self.assertEqual(layout.dead_slot_label(ArmId.BLACK, 15), "B16")
         self.assertEqual(dead_label(ArmId.WHITE, 0), "W1")
         self.assertEqual(dead_label(ArmId.BLACK, 15), "B16")
-        self.assertLess(layout.dead_slot(ArmId.WHITE, 0).x_mm, RobotConfig().board_origin_x_mm)
-        self.assertGreater(
-            layout.dead_slot(ArmId.BLACK, 0).x_mm,
-            RobotConfig().board_origin_x_mm + RobotConfig().board_size_mm,
-        )
+        config = RobotConfig()
+        board_left = config.table_origin_x_mm + config.board_origin_x_mm
+        board_right = board_left + config.board_size_mm
+        self.assertLess(layout.dead_slot(ArmId.WHITE, 0).x_mm, board_left)
+        self.assertGreater(layout.dead_slot(ArmId.BLACK, 0).x_mm, board_right)
         self.assertGreaterEqual(
             abs(layout.dead_slot(ArmId.WHITE, 0).y_mm - layout.dead_slot(ArmId.WHITE, 2).y_mm),
             50.0,
@@ -47,10 +47,13 @@ class StandardSetLayoutTests(unittest.TestCase):
         self.assertEqual(config.table_rows, 8)
         self.assertEqual(config.table_width_mm, 600.0)
         self.assertEqual(config.table_height_mm, 400.0)
-        self.assertEqual(layout.square("a1").x_mm, 125.0)
-        self.assertEqual(layout.square("h8").x_mm, 475.0)
-        self.assertEqual(layout.dead_slot(ArmId.WHITE, 0).x_mm, 25.0)
-        self.assertEqual(layout.dead_slot(ArmId.BLACK, 15).x_mm, 575.0)
+        # World (0, 0) is the table's center, so the table spans ±300 x / ±200 y.
+        self.assertEqual(config.table_origin_x_mm, -300.0)
+        self.assertEqual(config.table_origin_y_mm, -200.0)
+        self.assertEqual(layout.square("a1").x_mm, -175.0)
+        self.assertEqual(layout.square("h8").x_mm, 175.0)
+        self.assertEqual(layout.dead_slot(ArmId.WHITE, 0).x_mm, -275.0)
+        self.assertEqual(layout.dead_slot(ArmId.BLACK, 15).x_mm, 275.0)
 
     def test_grid_cell_names_use_chess_and_rack_labels(self) -> None:
         layout = BoardLayout(RobotConfig())

@@ -87,7 +87,8 @@ class HardwareMockTests(unittest.TestCase):
     def test_transfer_parks_opposite_arm_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = RobotConfig(journal_path=Path(tmp) / "j.jsonl")
-            hardware = DualArmHardware(config=config, use_mock=True)
+            transport = MockGatewayTransport()
+            hardware = DualArmHardware(config=config, transport=transport, use_mock=True)
             hardware.home_all()
             inventory = PhysicalInventory()
             token = inventory.token_at("board:e2")
@@ -104,6 +105,16 @@ class HardwareMockTests(unittest.TestCase):
             )
             self.assertTrue(hardware.parked[ArmId.WHITE])
             self.assertTrue(hardware.parked[ArmId.BLACK])
+            magnet_commands = [
+                command for command in transport.commands if command.action is Action.SET_MAGNET
+            ]
+            self.assertEqual(
+                [command.payload for command in magnet_commands],
+                [
+                    {"on": True, "settle_ms": 500},
+                    {"on": False, "settle_ms": 500},
+                ],
+            )
 
 
 class GameFaultTests(unittest.TestCase):

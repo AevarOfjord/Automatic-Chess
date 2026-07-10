@@ -6,6 +6,7 @@ import chess
 
 from .config import ArmId
 from .inventory import DEAD_SLOTS_PER_ARM, PhysicalInventory, board_location, dead_location
+from .trajectory import TrajectoryPlanningError
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,112 @@ class ResetPlanner:
         expected = chess.Board()
         state.assert_matches(expected)
         return MovePlan(None, transfers, expected, state)
+
+    def plan_pathable(self, inventory: PhysicalInventory, path_planner) -> MovePlan:
+        """Reset every token while keeping each fixed-height path clear.
+
+        A symbolic reset order is not necessarily traversable in a crowded
+        mid-game position. Run any currently pathable restore first, and use
+        empty storage as temporary space only when that is needed to open a
+        route; a recovery move then rebuilds the symbolic order.
+        """
+        state = inventory.clone()
+        transfers: list[PhysicalTransfer] = []
+        originals = [token for token in state.tokens.values() if token.original_square]
+        symbolic = self.plan(state).transfers
+
+        for _ in range(600):
+            misplaced = self._misplaced(state, originals)
+            if not misplaced:
+                break
+
+            transfer = self._first_pathable_transfer(state, symbolic, path_planner)
+            recovered = False
+            if transfer is None:
+                transfer = self._path_recovery_transfer(state, misplaced, path_planner)
+                recovered = transfer is not None
+            else:
+                symbolic.remove(transfer)
+            if transfer is None:
+                raise RuntimeError("reset has no safe temporary transfer; clear the board manually")
+
+            state.move(transfer.token_id, transfer.destination)
+            transfers.append(transfer)
+            if recovered:
+                # A recovery move changes the symbolic dependency graph; build
+                # a fresh reset order from the newly opened position.
+                symbolic = self.plan(state).transfers
+        else:
+            raise RuntimeError("path-aware reset exceeded transfer budget")
+
+        state.clear_promotions()
+        expected = chess.Board()
+        state.assert_matches(expected)
+        return MovePlan(None, transfers, expected, state)
+
+    @staticmethod
+    def _first_pathable_transfer(state: PhysicalInventory, transfers, path_planner):
+        for transfer in transfers:
+            if state.location_of(transfer.token_id) != transfer.source:
+                continue
+            if transfer.destination in state.occupied:
+                continue
+            try:
+                path_planner.plan_transfer(
+                    state, transfer.token_id, transfer.source, transfer.destination
+                )
+            except TrajectoryPlanningError:
+                continue
+            return transfer
+        return None
+
+    def _path_recovery_transfer(self, state: PhysicalInventory, misplaced: list, path_planner):
+        """Find one safe staging move that opens space for a later restore."""
+        candidates: list[tuple[tuple[float, float, float], PhysicalTransfer]] = []
+        homes = {token.token_id: board_location(token.original_square or "") for token in misplaced}
+        for token in misplaced:
+            source = state.location_of(token.token_id)
+            for destination in self._empty_staging_locations(state):
+                if destination == source:
+                    continue
+                try:
+                    path = path_planner.plan_transfer(state, token.token_id, source, destination)
+                except TrajectoryPlanningError:
+                    continue
+                # Prefer completing a token's reset, then moving a board puck
+                # into storage, before considering another board staging cell.
+                home_score = 0.0 if destination == homes[token.token_id] else 1.0
+                source_score = 0.0 if source.startswith("board:") else 1.0
+                storage_score = 0.0 if not destination.startswith("board:") else 1.0
+                arm = self._arm_for_source(source, token.color)
+                candidates.append(
+                    (
+                        (home_score, source_score + storage_score, path.travel_mm),
+                        PhysicalTransfer(arm, token.token_id, source, destination, "reset path recovery"),
+                    )
+                )
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][1]
+
+    @staticmethod
+    def _empty_staging_locations(state: PhysicalInventory) -> list[str]:
+        locations: list[str] = []
+        for arm in ArmId:
+            for index in range(DEAD_SLOTS_PER_ARM):
+                location = dead_location(arm, index)
+                if location not in state.occupied:
+                    locations.append(location)
+        for arm in ArmId:
+            location = f"buffer:{arm.value}"
+            if location not in state.occupied:
+                locations.append(location)
+        for square in chess.SQUARES:
+            location = board_location(square)
+            if location not in state.occupied:
+                locations.append(location)
+        return locations
 
     def _misplaced(self, state: PhysicalInventory, originals: list) -> list:
         return [
