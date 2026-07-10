@@ -472,6 +472,7 @@ class VisualChessRobotSimulator:
             self.stats.last_move = "reset complete"
             self.stats.last_move_san = "—"
             self.stats.moves_san = []
+            self.stats.moves_uci = []
             self.stats.path_skips = 0
             self.stats.mode = f"game {self.stats.game_number}"
             self.stats.message = "Board reset; continuing the loop"
@@ -489,7 +490,9 @@ class VisualChessRobotSimulator:
                 except ValueError:
                     san = move.uci()
                 assert self.stats.moves_san is not None
+                assert self.stats.moves_uci is not None
                 self.stats.moves_san.append(san)
+                self.stats.moves_uci.append(move.uci())
                 self.stats.last_move_san = san
             self.board = self.pending_plan.expected_board
             self.stats.plies += 1

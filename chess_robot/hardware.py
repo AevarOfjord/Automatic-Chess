@@ -218,6 +218,41 @@ class DualArmHardware:
                 pass
             self.parked[arm] = False
 
+    def _reachable_carry_poses(
+        self, arm: ArmId, path_points: list[Point], z_mm: float
+    ) -> list[tuple[JointPose, float]]:
+        """Convert path points to joint poses, dropping intermediates the arm cannot reach.
+
+        Source and destination must still be reachable. Detour waypoints outside an
+        arm's workspace are skipped so a collision-free puck path that wanders
+        near the table edge does not abort a legal chess transfer.
+        """
+        if len(path_points) < 2:
+            raise MotionFault(f"{arm.value} path needs at least source and destination")
+        solver = ScaraKinematics(self.config.arm(arm))
+        preferred = self.last_pose[arm]
+        poses: list[tuple[JointPose, float]] = []
+        for index, point in enumerate(path_points[1:], start=1):
+            is_destination = index == len(path_points) - 1
+            result = solver.inverse(point, preferred)
+            if result.reachable and result.pose is not None:
+                poses.append((result.pose, z_mm))
+                preferred = result.pose
+            elif is_destination:
+                raise MotionFault(
+                    f"{arm.value} cannot reach destination waypoint: {result.reason}"
+                )
+            else:
+                log.debug(
+                    "%s skipping unreachable intermediate path point %s (%s)",
+                    arm.value,
+                    index,
+                    result.reason,
+                )
+        if not poses:
+            raise MotionFault(f"{arm.value} has no reachable path waypoints")
+        return poses
+
     def transfer(
         self,
         arm: ArmId,
@@ -235,10 +270,10 @@ class DualArmHardware:
             path_points = self._plan_path_points(arm, source, destination, inventory, token_id)
         except TrajectoryPlanningError as exc:
             raise MotionFault(f"{arm.value} cannot plan puck path {source}->{destination}: {exc}") from exc
-        carry_poses = [
-            (self._pose_for_point(arm, point, f"puck path {index}"), cfg.fixed_tool_z_mm)
-            for index, point in enumerate(path_points[1:], start=1)
-        ]
+        carry_poses = self._reachable_carry_poses(arm, path_points, cfg.fixed_tool_z_mm)
+        # Guarantee the final pose matches the destination inverse solution.
+        if carry_poses[-1][0] != destination_pose:
+            carry_poses[-1] = (destination_pose, cfg.fixed_tool_z_mm)
         with self.workspace_lock:
             # Keep-out policy: only one arm may work the table; park the opposite arm first.
             log.debug("transfer %s %s -> %s token=%s", arm.value, source, destination, token_id)

@@ -28,8 +28,8 @@ PIECE_SYMBOLS = {
 
 @dataclass
 class Viewport:
-    # Extra width on the right for the dashboard panel (screen-space overlay).
-    width: int = 1540
+    # Extra width on the right for the three-column dashboard.
+    width: int = 1680
     height: int = 1000
     # Y range covers the arm bases at +/-310mm plus room for their labels;
     # X stays at the table's own extent since base_x is only +/-40mm.
@@ -38,10 +38,8 @@ class Viewport:
     world_min_y: float = -410.0
     world_max_y: float = 410.0
     margin: int = 28
-    # Dashboard occupies this many pixels on the right edge of the window.
-    # The board render is height-bound (see `scale`), so up to ~540px here
-    # comes out of otherwise-dead horizontal margin, not board size.
-    dashboard_width: int = 520
+    # Three columns under the header: moves | observe | controls.
+    dashboard_width: int = 720
 
     @property
     def board_area_width(self) -> int:
@@ -122,6 +120,7 @@ class SimulatorStats:
     message: str = "Use the control board or keyboard (Space / N / R / +/-)"
     last_result: str = ""
     moves_san: list[str] | None = None
+    moves_uci: list[str] | None = None
     path_skips: int = 0
     active_arm: str = "—"
     active_step_label: str = "idle"
@@ -131,3 +130,5 @@ class SimulatorStats:
     def __post_init__(self) -> None:
         if self.moves_san is None:
             self.moves_san = []
+        if self.moves_uci is None:
+            self.moves_uci = []

@@ -146,14 +146,31 @@ class GameManager:
         return self.players[white_index if self.board.turn is chess.WHITE else 1 - white_index]
 
     def plan_is_pathable(self, plan: MovePlan) -> bool:
-        """Return True if every physical transfer has a collision-free puck route."""
+        """Return True if every transfer has a puck route and reachable endpoints."""
+
+        from .geometry import ScaraKinematics
 
         state = self.inventory.clone()
         try:
             for transfer in plan.transfers:
-                self.path_planner.plan_transfer(
+                path = self.path_planner.plan_transfer(
                     state, transfer.token_id, transfer.source, transfer.destination
                 )
+                solver = ScaraKinematics(self.config.arm(transfer.arm))
+                # Endpoints must be in the arm workspace; intermediates may be skipped later.
+                for point, label in (
+                    (path.points[0], "source"),
+                    (path.points[-1], "destination"),
+                ):
+                    reach = solver.inverse(point)
+                    if not reach.reachable:
+                        log.debug(
+                            "plan not executable: %s cannot reach %s (%s)",
+                            transfer.arm.value,
+                            label,
+                            reach.reason,
+                        )
+                        return False
                 state.move(transfer.token_id, transfer.destination)
         except TrajectoryPlanningError:
             return False

@@ -57,17 +57,15 @@ Useful options:
 
 ### Control board (right panel)
 
-Clickable operator controls:
+Under a shared header, three columns:
 
-| Control | Action |
-|---------|--------|
-| **Play / Pause** | Run or freeze the twin |
-| **Step** | Advance one planned move |
-| **Skip anim** | Finish the current transfer plan instantly |
-| **Reset / Next game** | Rebuild the physical start position |
-| **Speed** | − / 0.5× / 1× / 2× / 4× / + |
-| **Auto-loop** | After game over, auto-reset and continue (or stop for manual control) |
-| **Paths / Labels** | Toggle path preview and cell names |
+| Column | Contents |
+|--------|----------|
+| **Moves** | Scoresheet: `1. White: E2 to E4`, `2. Black: E7 to E5`, … |
+| **Observe** | Live telemetry — now running, game, engines, motion, arm state, status |
+| **Controls** | Play / Pause / Step / Skip / Reset / Next game, speed, modes, keys |
+
+Hover a column and use the mouse wheel (or PgUp/PgDn) to scroll that column only.
 
 Keyboard: `Space` play/pause · `N` step · `S` skip · `R` reset · `L` auto-loop · `P` paths · `+/-` speed · `Esc` quit.
 

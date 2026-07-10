@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from chess_robot.visual_simulator import VisualChessRobotSimulator, VisualOptions
+from chess_robot.visual_simulator import PygameRenderer, VisualChessRobotSimulator, VisualOptions
 
 
 class VisualSimulatorTests(unittest.TestCase):
@@ -65,9 +65,15 @@ class VisualSimulatorTests(unittest.TestCase):
                 break
         self.assertGreaterEqual(simulator.stats.plies, 1)
         self.assertTrue(simulator.stats.moves_san)
+        self.assertTrue(simulator.stats.moves_uci)
+        self.assertEqual(simulator.stats.moves_uci[-1], simulator.stats.last_move)
         self.assertNotEqual(simulator.stats.last_move_san, "—")
         self.assertGreaterEqual(simulator.stats.plan_transfers_total, 0)
         simulator.close()
+
+    def test_move_history_uses_numbered_white_black_coordinate_rows(self) -> None:
+        self.assertEqual(PygameRenderer._format_move_history_line(1, "a1b4"), "1. White: A1 to B4")
+        self.assertEqual(PygameRenderer._format_move_history_line(2, "g8f3"), "2. Black: G8 to F3")
 
     def test_control_board_actions_change_runtime_state(self) -> None:
         simulator = VisualChessRobotSimulator(options=VisualOptions(seed=8, auto_start=False, speed=1.0))
