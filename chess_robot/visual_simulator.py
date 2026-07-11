@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import math
 import random
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 import chess
@@ -32,13 +35,30 @@ __all__ = [
 ]
 
 
-class VisualChessRobotSimulator:
-    """Top-down digital twin for the dual-SCARA chess robot.
+@dataclass(frozen=True)
+class _BackgroundPlanResult:
+    """Result of engine + path planning computed off the UI thread."""
 
-    The simulator deliberately reuses the production geometry, inventory, and
-    chess move planner.  The only mocked part is time: instead of sending
-    trajectories to ESP32s, it interpolates the same pickup/drop intent on
-    screen.
+    generation: int
+    kind: str  # "move" | "reset" | "reset_fault" | "move_fault"
+    plan: MovePlan | None = None
+    paths: tuple[PlannedPath, ...] = ()
+    is_reset: bool = False
+    skipped: int = 0
+    player_name: str = ""
+    message: str = ""
+    mode: str = ""
+    last_move: str = ""
+    last_move_san: str = ""
+    error: str = ""
+
+
+class VisualChessRobotSimulator:
+    """Top-down digital twin for the dual-arm chess robot.
+
+    The simulator reuses production geometry, inventory, and chess move
+    planning. Stockfish search and puck path planning run on a background
+    worker so the pygame UI stays responsive during think time.
     """
 
     def __init__(
@@ -68,6 +88,10 @@ class VisualChessRobotSimulator:
         self.current_plan_paths: list[PlannedPath] = []
         self.current_locations = dict(self.inventory.locations)
         self.arms: dict[ArmId, VisualArm] = {}
+        # Single worker: Stockfish UCI engines are not shared concurrently.
+        self._plan_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sim-plan")
+        self._plan_future: Future[_BackgroundPlanResult] | None = None
+        self._plan_generation = 0
         for arm in ArmId:
             cfg = self.config.arm(arm)
             pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg, cfg.home_wrist_deg)
@@ -81,6 +105,8 @@ class VisualChessRobotSimulator:
             )
 
     def close(self) -> None:
+        self._invalidate_background_plan()
+        self._plan_executor.shutdown(wait=False, cancel_futures=True)
         for player in self.players:
             player.close()
 
@@ -99,6 +125,10 @@ class VisualChessRobotSimulator:
             if self.step_once:
                 self.step_once = False
                 self.paused = True
+            return
+        # Apply finished engine/path jobs before the inter-game delay so a
+        # reset plan can start animating as soon as it is ready.
+        if self._poll_background_plan():
             return
         if self.game_over_delay_s > 0:
             self.game_over_delay_s = max(0.0, self.game_over_delay_s - dt_s)
@@ -162,6 +192,13 @@ class VisualChessRobotSimulator:
 
     def skip_animation(self) -> None:
         """Jump through the current plan's animation without waiting."""
+        # Finish any in-flight engine/path job so there is something to skip.
+        if self._plan_future is not None:
+            try:
+                self._plan_future.result(timeout=30.0)
+            except Exception:  # noqa: BLE001
+                pass
+            self._poll_background_plan()
         guard = 0
         while guard < 5000 and (self.active_step or self.plan_queue or self.pending_plan):
             guard += 1
@@ -193,15 +230,88 @@ class VisualChessRobotSimulator:
 
     def reset_now(self) -> None:
         if self.board == chess.Board() and not self.plan_queue and not self.active_step:
-            self.stats.message = "Already at the starting position"
-            return
+            if self._plan_future is None:
+                self.stats.message = "Already at the starting position"
+                return
+        self._invalidate_background_plan()
         self.plan_queue.clear()
         self.active_step = None
+        self.pending_plan = None
+        self.pending_plan_is_reset = False
         self.game_over_delay_s = 0.0
         self._try_queue_reset()
         self.stats.message = "Reset requested"
 
+    def _invalidate_background_plan(self) -> None:
+        """Drop any in-flight plan so a later result is ignored."""
+        self._plan_generation += 1
+        self._plan_future = None
+
+    def _poll_background_plan(self) -> bool:
+        """Apply a finished background plan. True if still waiting or just applied."""
+        future = self._plan_future
+        if future is None:
+            return False
+        if not future.done():
+            # Keep the UI loop alive while Stockfish / path planning runs.
+            # Yield the GIL so the pure-Python planner thread can progress
+            # (tight tick loops otherwise starve the worker).
+            if "thinking" not in self.stats.mode and "planning" not in self.stats.mode:
+                self.stats.mode = "engine thinking"
+                self.stats.message = "Thinking / planning paths…"
+                self.stats.active_step_label = "background plan"
+            time.sleep(0.001)
+            return True
+        self._plan_future = None
+        try:
+            result = future.result()
+        except Exception as exc:  # noqa: BLE001 — surface planner/engine faults in the UI
+            self.paused = True
+            self.stats.mode = "planning fault"
+            self.stats.message = f"Background plan failed: {exc}"
+            return True
+        if result.generation != self._plan_generation:
+            return False
+        self._apply_background_result(result)
+        return True
+
+    def _apply_background_result(self, result: _BackgroundPlanResult) -> None:
+        if result.kind == "move_fault":
+            self.paused = True
+            self.stats.mode = result.mode or "trajectory fault"
+            self.stats.message = result.message or "No pathable move"
+            return
+        if result.kind == "reset_fault":
+            self.pending_plan = None
+            self.pending_plan_is_reset = False
+            self.plan_queue.clear()
+            self.current_plan_paths.clear()
+            self.paused = True
+            self.stats.mode = result.mode or "reset trajectory fault"
+            self.stats.message = result.message
+            return
+        if result.plan is None:
+            self.paused = True
+            self.stats.mode = "planning fault"
+            self.stats.message = result.message or "Empty plan result"
+            return
+        if result.kind == "move":
+            self.stats.path_skips += result.skipped
+            self.stats.last_move = result.last_move
+            self.stats.last_move_san = result.last_move_san
+            self.stats.mode = result.mode
+            self.stats.message = result.message
+        self._enqueue_plan(
+            result.plan,
+            is_reset=result.is_reset,
+            precomputed_paths=list(result.paths),
+        )
+        self.pending_plan = result.plan
+        self.pending_plan_is_reset = result.is_reset
+
     def _queue_next_plan(self) -> None:
+        if self._plan_future is not None:
+            return
         if self.options.max_plies is not None and self.stats.plies >= self.options.max_plies:
             self.stats.mode = "max plies reached"
             self.stats.message = "Max plies reached"
@@ -226,62 +336,142 @@ class VisualChessRobotSimulator:
                 self.stats.message = f"Game over {result} — press Next game or enable Auto-loop"
             return
 
+        generation = self._plan_generation
+        board = self.board.copy(stack=False)
+        inventory = self.inventory.clone()
+        player = self._player_for_turn()
         player_name = self._player_name_for_turn()
-        preferred_move = self._player_for_turn().choose_move(self.board)
+        self.stats.mode = "engine thinking"
+        self.stats.message = f"{player_name}: thinking…"
+        self.stats.active_step_label = "engine"
+        self._plan_future = self._plan_executor.submit(
+            self._worker_plan_move,
+            generation,
+            board,
+            inventory,
+            player,
+            player_name,
+        )
+
+    def _try_queue_reset(self) -> None:
+        if self._plan_future is not None and not self._plan_future.done():
+            # A newer generation already invalidated the old job.
+            pass
+        generation = self._plan_generation
+        inventory = self.inventory.clone()
+        self.stats.mode = "planning reset"
+        self.stats.message = "Planning pathable board reset…"
+        self.stats.active_step_label = "reset plan"
+        self._plan_future = self._plan_executor.submit(
+            self._worker_plan_reset,
+            generation,
+            inventory,
+        )
+
+    def _worker_plan_move(
+        self,
+        generation: int,
+        board: chess.Board,
+        inventory: PhysicalInventory,
+        player: Player,
+        player_name: str,
+    ) -> _BackgroundPlanResult:
+        preferred_move = player.choose_move(board)
         candidate_moves = [preferred_move] + [
-            move for move in self.board.legal_moves if move != preferred_move
+            move for move in board.legal_moves if move != preferred_move
         ]
         skipped = 0
         for move in candidate_moves:
-            plan = self.move_planner.plan(self.board, self.inventory, move)
+            plan = self.move_planner.plan(board, inventory, move)
             try:
-                self._enqueue_plan(plan, is_reset=False)
+                paths = self._path_plan_transfers(plan, inventory)
             except TrajectoryPlanningError:
                 skipped += 1
                 continue
-            self.pending_plan = plan
-            self.pending_plan_is_reset = False
             try:
-                san = self.board.san(move)
+                san = board.san(move)
             except ValueError:
                 san = move.uci()
-            self.stats.last_move = move.uci()
-            self.stats.last_move_san = san
-            self.stats.path_skips += skipped
-            side = "White" if self.board.turn else "Black"
-            self.stats.mode = f"{side} to move"
-            self.stats.message = self._describe_move(move)
+            side = "White" if board.turn else "Black"
+            message = self._describe_move_on_board(board, move)
             if skipped:
-                self.stats.message = f"{self.stats.message} ({skipped} blocked move(s) skipped)"
+                message = f"{message} ({skipped} blocked move(s) skipped)"
             if player_name:
-                self.stats.message = f"{player_name}: {self.stats.message}"
-            return
-        self.stats.mode = "trajectory fault"
-        self.stats.message = "No legal chess move has a collision-free puck route"
-        raise TrajectoryPlanningError(self.stats.message)
+                message = f"{player_name}: {message}"
+            return _BackgroundPlanResult(
+                generation=generation,
+                kind="move",
+                plan=plan,
+                paths=tuple(paths),
+                is_reset=False,
+                skipped=skipped,
+                player_name=player_name,
+                message=message,
+                mode=f"{side} to move",
+                last_move=move.uci(),
+                last_move_san=san,
+            )
+        return _BackgroundPlanResult(
+            generation=generation,
+            kind="move_fault",
+            message="No legal chess move has a collision-free puck route",
+            mode="trajectory fault",
+        )
 
-    def _try_queue_reset(self) -> None:
+    def _worker_plan_reset(
+        self, generation: int, inventory: PhysicalInventory
+    ) -> _BackgroundPlanResult:
         try:
-            plan = self.reset_planner.plan_pathable(self.inventory, self.puck_planner)
-            self._enqueue_plan(plan, is_reset=True)
+            plan = self.reset_planner.plan_pathable(inventory, self.puck_planner)
+            paths = self._path_plan_transfers(plan, inventory)
         except (RuntimeError, TrajectoryPlanningError) as exc:
-            self.pending_plan = None
-            self.pending_plan_is_reset = False
-            self.plan_queue.clear()
-            self.current_plan_paths.clear()
-            self.paused = True
-            self.stats.mode = "reset trajectory fault"
-            self.stats.message = f"Reset needs blocker clearing: {exc}"
-            return
-        self.pending_plan = plan
-        self.pending_plan_is_reset = True
+            return _BackgroundPlanResult(
+                generation=generation,
+                kind="reset_fault",
+                message=f"Reset needs blocker clearing: {exc}",
+                mode="reset trajectory fault",
+            )
+        return _BackgroundPlanResult(
+            generation=generation,
+            kind="reset",
+            plan=plan,
+            paths=tuple(paths),
+            is_reset=True,
+            message=f"Reset plan: {len(plan.transfers)} piece transfers",
+            mode="resetting board",
+            last_move_san="reset",
+        )
 
-    def _enqueue_plan(self, plan: MovePlan, *, is_reset: bool) -> None:
+    def _path_plan_transfers(
+        self, plan: MovePlan, inventory: PhysicalInventory
+    ) -> list[PlannedPath]:
+        """Validate every transfer has a collision-free puck path (worker-safe)."""
+        physical_state = inventory.clone()
+        paths: list[PlannedPath] = []
+        for transfer in plan.transfers:
+            paths.append(
+                self.puck_planner.plan_transfer(
+                    physical_state,
+                    transfer.token_id,
+                    transfer.source,
+                    transfer.destination,
+                )
+            )
+            physical_state.move(transfer.token_id, transfer.destination)
+        return paths
+
+    def _enqueue_plan(
+        self,
+        plan: MovePlan,
+        *,
+        is_reset: bool,
+        precomputed_paths: list[PlannedPath] | None = None,
+    ) -> None:
         plan_queue: list[AnimationStep] = []
         planned_paths: list[PlannedPath] = []
         virtual_tools = {arm_id: arm.tool for arm_id, arm in self.arms.items()}
         physical_state = self.inventory.clone()
-        for transfer in plan.transfers:
+        for index, transfer in enumerate(plan.transfers):
             # Keep-out: opposite arm returns to its folded home before this arm works.
             opposite = transfer.arm.opposite
             park = self.layout.park(opposite)
@@ -291,12 +481,15 @@ class VisualChessRobotSimulator:
                     self._home_motion(opposite, "keep-out folded home", virtual_tools[opposite], park, fixed_z)
                 )
                 virtual_tools[opposite] = park
-            planned_path = self.puck_planner.plan_transfer(
-                physical_state,
-                transfer.token_id,
-                transfer.source,
-                transfer.destination,
-            )
+            if precomputed_paths is not None:
+                planned_path = precomputed_paths[index]
+            else:
+                planned_path = self.puck_planner.plan_transfer(
+                    physical_state,
+                    transfer.token_id,
+                    transfer.source,
+                    transfer.destination,
+                )
             planned_paths.append(planned_path)
             plan_queue.extend(
                 self._steps_for_transfer(transfer, virtual_tools[transfer.arm], planned_path.points)
@@ -564,9 +757,13 @@ class VisualChessRobotSimulator:
         return getattr(profile, "name", "Stockfish")
 
     def _describe_move(self, move: chess.Move) -> str:
-        piece = self.board.piece_at(move.from_square)
+        return self._describe_move_on_board(self.board, move)
+
+    @staticmethod
+    def _describe_move_on_board(board: chess.Board, move: chess.Move) -> str:
+        piece = board.piece_at(move.from_square)
         piece_name = piece.symbol().upper() if piece else "?"
-        capture = " capture" if self.board.is_capture(move) else ""
+        capture = " capture" if board.is_capture(move) else ""
         promotion = (
             f" promotes to {chess.piece_symbol(move.promotion).upper()}" if move.promotion else ""
         )
@@ -606,5 +803,12 @@ def run_visual_simulator(args: argparse.Namespace | None = None) -> None:
         options.white_skill = getattr(args, "white_skill", options.white_skill)
         options.black_skill = getattr(args, "black_skill", options.black_skill)
         options.move_time_s = getattr(args, "move_time", options.move_time_s)
+        options.fullscreen = bool(getattr(args, "fullscreen", False))
+        width = getattr(args, "width", None)
+        height = getattr(args, "height", None)
+        if width is not None:
+            options.window_width = max(800, int(width))
+        if height is not None:
+            options.window_height = max(500, int(height))
     simulator = VisualChessRobotSimulator(options=options)
     PygameRenderer(simulator).run()

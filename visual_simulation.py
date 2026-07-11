@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--white-skill", type=int, default=DEFAULT_WHITE_SKILL)
     parser.add_argument("--black-skill", type=int, default=DEFAULT_BLACK_SKILL)
     parser.add_argument("--move-time", type=float, default=DEFAULT_MOVE_TIME_S)
+    parser.add_argument("--fullscreen", action="store_true", help="start fullscreen")
+    parser.add_argument("--width", type=int, default=1280, help="window width (windowed)")
+    parser.add_argument("--height", type=int, default=800, help="window height (windowed)")
     return parser
 
 

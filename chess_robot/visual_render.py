@@ -47,10 +47,20 @@ class PygameRenderer:
 
         self.pygame = pygame
         self.sim = simulator
-        self.viewport = viewport or Viewport()
+        opts = simulator.options
+        if viewport is None:
+            viewport = Viewport(
+                width=opts.window_width,
+                height=opts.window_height,
+                dashboard_width=Viewport.dashboard_width_for(opts.window_width),
+            )
+        self.viewport = viewport
+        self.fullscreen = bool(opts.fullscreen)
+        # Last windowed size so leaving fullscreen restores a normal window.
+        self._windowed_size = (self.viewport.width, self.viewport.height)
         pygame.init()
-        self.screen = pygame.display.set_mode((self.viewport.width, self.viewport.height))
-        pygame.display.set_caption("Dual-SCARA Chess Robot — Control Board")
+        self.screen = self._create_display()
+        pygame.display.set_caption("Chess Robot — Control Board")
         self.clock = pygame.time.Clock()
         self.title_font = pygame.font.SysFont("segoeui", 21, bold=True)
         self.font = pygame.font.SysFont("segoeui", 16)
@@ -65,6 +75,48 @@ class PygameRenderer:
         self._col_max_scroll = {"moves": 0, "observe": 0, "controls": 0}
         self._col_rects: dict[str, object] = {}
 
+    def _create_display(self):
+        """Open a resizable window by default; optional exclusive fullscreen."""
+        pygame = self.pygame
+        if self.fullscreen:
+            # Desktop-size fullscreen; keep viewport in sync with actual pixels.
+            info = pygame.display.Info()
+            w, h = info.current_w or self.viewport.width, info.current_h or self.viewport.height
+            self.viewport.resize(w, h)
+            flags = pygame.FULLSCREEN
+        else:
+            flags = pygame.RESIZABLE
+        return pygame.display.set_mode((self.viewport.width, self.viewport.height), flags)
+
+    def set_fullscreen(self, enabled: bool) -> None:
+        if enabled == self.fullscreen:
+            return
+        if enabled:
+            self._windowed_size = (self.viewport.width, self.viewport.height)
+            self.fullscreen = True
+        else:
+            self.fullscreen = False
+            w, h = self._windowed_size
+            self.viewport.resize(w, h)
+        self.sim.options.fullscreen = self.fullscreen
+        self.screen = self._create_display()
+        self.sim.stats.message = "Fullscreen ON (F11)" if self.fullscreen else "Windowed mode (F11)"
+
+    def toggle_fullscreen(self) -> None:
+        self.set_fullscreen(not self.fullscreen)
+
+    def _apply_resize(self, width: int, height: int) -> None:
+        if self.fullscreen:
+            return
+        self.viewport.resize(width, height)
+        self._windowed_size = (self.viewport.width, self.viewport.height)
+        self.sim.options.window_width = self.viewport.width
+        self.sim.options.window_height = self.viewport.height
+        # Re-create so pygame's surface matches the resized viewport.
+        self.screen = self.pygame.display.set_mode(
+            (self.viewport.width, self.viewport.height), self.pygame.RESIZABLE
+        )
+
     def run(self) -> None:
         pygame = self.pygame
         running = True
@@ -76,9 +128,16 @@ class PygameRenderer:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
+                    elif event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                        self._apply_resize(event.w, event.h)
                     elif event.type == pygame.KEYDOWN:
                         if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                            running = False
+                            if self.fullscreen:
+                                self.set_fullscreen(False)
+                            else:
+                                running = False
+                        elif event.key == pygame.K_F11:
+                            self.toggle_fullscreen()
                         elif event.key == pygame.K_SPACE:
                             self.sim.toggle_pause()
                         elif event.key == pygame.K_n:
@@ -171,6 +230,10 @@ class PygameRenderer:
             sim.toggle_show_paths()
         elif action == "show_labels":
             sim.toggle_show_labels()
+        elif action == "windowed":
+            self.set_fullscreen(False)
+        elif action == "fullscreen":
+            self.set_fullscreen(True)
 
     def draw(self) -> None:
         # Light studio background
@@ -603,6 +666,27 @@ class PygameRenderer:
         )
         y = self._section_rule(x, y, inner_w)
 
+        y = self._section_title(x, y, "WINDOW")
+        y = self._button_row(
+            x,
+            y,
+            inner_w,
+            [
+                ("windowed", "Windowed", not self.fullscreen),
+                ("fullscreen", "Fullscreen", self.fullscreen),
+            ],
+            height=30,
+        )
+        self._blit_text(
+            f"{self.viewport.width}×{self.viewport.height}  ·  F11 toggle",
+            x,
+            y,
+            self.mono,
+            Palette.INK_MUTED,
+        )
+        y += 18
+        y = self._section_rule(x, y, inner_w)
+
         y = self._section_title(x, y, "MODES")
         for action, label, flag in (
             ("auto_loop", "Auto-loop", opts.auto_loop),
@@ -617,10 +701,11 @@ class PygameRenderer:
             "Space play/pause",
             "N step · S skip",
             "R reset · L auto-loop",
-            "P paths · Esc quit",
+            "P paths · F11 fullscreen",
+            "Esc windowed / quit",
             "+/- speed",
+            "Drag corner to resize",
             "Wheel scrolls column",
-            "PgUp/PgDn scroll",
         ):
             self._blit_text(line, x, y, self.mono, Palette.INK_MUTED)
             y += 15

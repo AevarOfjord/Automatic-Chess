@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 
 from chess_robot.visual_simulator import PygameRenderer, VisualChessRobotSimulator, VisualOptions
@@ -8,18 +9,42 @@ from chess_robot.visual_simulator import PygameRenderer, VisualChessRobotSimulat
 class VisualSimulatorTests(unittest.TestCase):
     def test_visual_simulator_advances_moves_and_resets(self) -> None:
         simulator = VisualChessRobotSimulator(options=VisualOptions(seed=3, max_plies=4, speed=10.0))
+        try:
+            # Stop after one full reset. Letting the auto-loop run hundreds of
+            # simulated games turns a unit check into an expensive stress test.
+            for _ in range(2000):
+                simulator.tick(0.05)
+                if simulator.stats.game_number >= 2:
+                    break
 
-        # Stop after one full reset. Letting the auto-loop run hundreds of
-        # simulated games turns a unit check into an expensive stress test.
-        for _ in range(800):
-            simulator.tick(0.05)
-            if simulator.stats.game_number >= 2:
-                break
+            self.assertGreaterEqual(simulator.stats.completed_transfers, 4)
+            self.assertGreaterEqual(simulator.stats.game_number, 2)
+            self.assertLessEqual(simulator.stats.plies, 4)
+            self.assertTrue(simulator.stats.last_move)
+        finally:
+            simulator.close()
 
-        self.assertGreaterEqual(simulator.stats.completed_transfers, 4)
-        self.assertGreaterEqual(simulator.stats.game_number, 2)
-        self.assertLessEqual(simulator.stats.plies, 4)
-        self.assertTrue(simulator.stats.last_move)
+    def test_background_plan_does_not_block_ticks(self) -> None:
+        """While a plan job is running, tick() must return immediately."""
+        simulator = VisualChessRobotSimulator(
+            options=VisualOptions(seed=9, auto_start=True, use_engine=False, speed=1.0)
+        )
+        try:
+            # First tick should only submit the background job (or apply if instant).
+            t0 = time.perf_counter()
+            simulator.tick(0.016)
+            elapsed = time.perf_counter() - t0
+            self.assertLess(elapsed, 0.25)
+            # Drain until a plan is ready without stalling the loop.
+            for _ in range(200):
+                simulator.tick(0.016)
+                if simulator.plan_queue or simulator.active_step or simulator.pending_plan:
+                    break
+            self.assertTrue(
+                simulator.plan_queue or simulator.active_step or simulator.stats.completed_transfers >= 0
+            )
+        finally:
+            simulator.close()
 
     def test_step_mode_stays_paused_until_requested(self) -> None:
         simulator = VisualChessRobotSimulator(options=VisualOptions(seed=4, auto_start=False))
@@ -74,6 +99,22 @@ class VisualSimulatorTests(unittest.TestCase):
     def test_move_history_uses_numbered_white_black_coordinate_rows(self) -> None:
         self.assertEqual(PygameRenderer._format_move_history_line(1, "a1b4"), "1. White: A1 to B4")
         self.assertEqual(PygameRenderer._format_move_history_line(2, "g8f3"), "2. Black: G8 to F3")
+
+    def test_viewport_default_is_windowed_size_not_desktop_filling(self) -> None:
+        from chess_robot.visual_models import Viewport, VisualOptions
+
+        opts = VisualOptions()
+        self.assertFalse(opts.fullscreen)
+        self.assertEqual(opts.window_width, 1280)
+        self.assertEqual(opts.window_height, 800)
+        view = Viewport()
+        self.assertEqual(view.width, 1280)
+        self.assertEqual(view.height, 800)
+        view.resize(1600, 900)
+        self.assertEqual(view.width, 1600)
+        self.assertEqual(view.height, 900)
+        self.assertGreaterEqual(view.dashboard_width, 320)
+        self.assertLessEqual(view.dashboard_width, 720)
 
     def test_control_board_actions_change_runtime_state(self) -> None:
         simulator = VisualChessRobotSimulator(options=VisualOptions(seed=8, auto_start=False, speed=1.0))

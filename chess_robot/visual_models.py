@@ -28,9 +28,9 @@ PIECE_SYMBOLS = {
 
 @dataclass
 class Viewport:
-    # Extra width on the right for the three-column dashboard.
-    width: int = 1680
-    height: int = 1000
+    # Default is a normal window, not a near-desktop-filling size.
+    width: int = 1280
+    height: int = 800
     # Y range covers the arm bases at +/-310mm plus room for their labels;
     # X stays at the table's own extent since base_x is only +/-40mm.
     world_min_x: float = -390.0
@@ -39,7 +39,17 @@ class Viewport:
     world_max_y: float = 410.0
     margin: int = 28
     # Three columns under the header: moves | observe | controls.
-    dashboard_width: int = 720
+    dashboard_width: int = 520
+
+    @staticmethod
+    def dashboard_width_for(window_width: int) -> int:
+        """Scale the right-hand panel with the window, with sane bounds."""
+        return max(320, min(720, int(window_width * 0.40)))
+
+    def resize(self, width: int, height: int) -> None:
+        self.width = max(800, int(width))
+        self.height = max(500, int(height))
+        self.dashboard_width = self.dashboard_width_for(self.width)
 
     @property
     def board_area_width(self) -> int:
@@ -103,6 +113,10 @@ class VisualOptions:
     white_skill: int = DEFAULT_WHITE_SKILL
     black_skill: int = DEFAULT_BLACK_SKILL
     move_time_s: float = DEFAULT_MOVE_TIME_S
+    # Window: default is a resizable windowed view (not exclusive fullscreen).
+    fullscreen: bool = False
+    window_width: int = 1280
+    window_height: int = 800
     # Control-board options
     auto_loop: bool = True  # after game over, auto-reset and continue
     show_paths: bool = True

@@ -191,6 +191,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MOVE_TIME_S,
         help="Stockfish think time per move in seconds",
     )
+    visual_parser.add_argument(
+        "--fullscreen",
+        action="store_true",
+        help="start in exclusive fullscreen (default is a resizable window)",
+    )
+    visual_parser.add_argument(
+        "--width",
+        type=int,
+        default=1280,
+        help="window width in pixels when not fullscreen (default 1280)",
+    )
+    visual_parser.add_argument(
+        "--height",
+        type=int,
+        default=800,
+        help="window height in pixels when not fullscreen (default 800)",
+    )
     visual_parser.set_defaults(function=visual_command)
 
     default_port = RobotConfig.from_env().serial_port
