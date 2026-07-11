@@ -1,6 +1,6 @@
-# Dual-SCARA Chess Robot
+# Dual-Arm Chess Robot
 
-Software-first build for two opposing SCARA chess robots. The PC is the big brain: it owns the chess state, physical inventory, move planning, kinematics, validation, and recovery. The ESP32s are motion executors.
+Software-first build for two opposing planar 3R chess robots (MG995-class 180° joints). The PC is the big brain: it owns the chess state, physical inventory, move planning, kinematics, validation, and recovery. The ESP32s are motion executors.
 
 Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess) · License: [MIT](LICENSE)
 
@@ -77,7 +77,7 @@ chess_robot/
   planning.py        # chess move → physical transfers (capture, castle, EP, promo)
   inventory.py       # 32-token identity map + dead racks
   trajectory.py      # puck XY paths around other pucks
-  geometry.py        # board layout + SCARA IK
+  geometry.py        # board layout + planar 3R IK
   hardware.py        # serialized dual-arm execution + keep-out park
   transport.py       # serial / mock gateway
   protocol.py        # JSON wire format + command journal
@@ -111,14 +111,16 @@ Captured pieces are placed deterministically, never randomly.
 .\venv\Scripts\python.exe -m unittest discover -v
 ```
 
-`optimize-geometry` searches the agreed mirrored 270-degree SCARA design space and writes
-`runtime_data/geometry_optimization.json`. It certifies every 1 mm operational grid point and each
-horizontal, vertical, and diagonal neighboring-grid route before reporting a candidate.
+`optimize-geometry` searches the mirrored 3R design space (unequal link lengths, 180° joint
+windows, 50 mm base setback) and writes `runtime_data/geometry_optimization.json`. Default
+geometry is **200 / 160 / 180 mm** links. Certification covers the operational grid and each
+horizontal, vertical, and diagonal neighboring-grid route.
 
 ## Docs
 
 - [Architecture](docs/architecture.md)
 - [Hardware bring-up](docs/hardware.md)
+- [Build dimensions](docs/build_dimensions.md)
 - [Fault recovery](docs/fault_recovery.md)
 
 Environment overrides: `CHESS_ROBOT_PORT`, `CHESS_ROBOT_BAUD`, `CHESS_ROBOT_TIMEOUT_S`, `CHESS_ROBOT_RETRIES`, `CHESS_ROBOT_JOURNAL`.

@@ -26,8 +26,9 @@ PC  --USB serial JSON-->  ESP32 Gateway  --ESP-NOW-->  WHITE arm ESP32
 1. Set unique Wi‑Fi MACs for gateway peer list and each arm (`GATEWAY_MAC`, `WHITE_ARM_MAC`, `BLACK_ARM_MAC`).
 2. Flash `esp32_arm_receiver.ino` once with `#define ARM_ID "WHITE"`, once with `"BLACK"`.
 3. Confirm stepper pins, home switches, e-stop, magnet driver, and pickup sensor match the sketch.
-4. Calibrate `J1_STEPS_PER_DEG` / `J2_STEPS_PER_DEG` for your gearing and microstepping.
+4. Calibrate `J1_STEPS_PER_DEG` / `J2_STEPS_PER_DEG` / `J3_STEPS_PER_DEG` for your gearing and microstepping (or PWM mapping for MG995 servos).
 5. Park poses and base positions in `chess_robot/config.py` must match the physical table (600×400 mm grid, 50 mm cells).
+6. Default arm geometry is a **planar 3R** with unequal links **200 / 160 / 180 mm**, bases **50 mm** off the long table edges, and **180°** joint windows per MG995-class servo.
 
 ### Grid labels (mark these on the table)
 
@@ -51,9 +52,12 @@ Default in `RobotConfig`:
 ## Motion model
 
 - Fixed tool height (no Z lift axis).
+- Three rotary joints per arm (shoulder / elbow / wrist); wire waypoints are
+  `[shoulder°, elbow°, wrist°, z_mm, speed, acceleration]`.
 - Electromagnet on at source center → planar XY path → magnet off at destination.
 - Weak board-cell magnets help snap steel-insert pucks to cell centers after release.
-- **Keep-out policy:** only one arm works the table at a time; the opposite arm is parked first.
+- **Keep-out policy:** only one arm works the table at a time; the opposite arm is parked first
+  in a folded rest pose outside the board.
 
 ## Camera
 
@@ -84,4 +88,4 @@ Vision verifies **occupancy**, not piece identity. The PC inventory remains auth
 6. Single transfer of one known puck with magnet and sensor supervised.
 7. Only then: `python -m chess_robot run --port COMx`
 
-See also [fault_recovery.md](fault_recovery.md).
+See also [build_dimensions.md](build_dimensions.md) for the full physical cut list and [fault_recovery.md](fault_recovery.md).

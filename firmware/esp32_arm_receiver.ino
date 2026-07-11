@@ -1,5 +1,8 @@
 /*
- * Dual-SCARA arm controller
+ * Dual 3R arm controller (MG995-class 180° joints via geared drivers)
+ *
+ * Wire waypoint format (6 numbers):
+ *   [shoulder_deg, elbow_deg, wrist_deg, fixed_z_mm, speed, acceleration]
  *
  * Required libraries:
  *   ArduinoJson 6.x
@@ -24,23 +27,30 @@ static constexpr int J1_STEP_PIN = 12;
 static constexpr int J1_DIR_PIN = 14;
 static constexpr int J2_STEP_PIN = 27;
 static constexpr int J2_DIR_PIN = 26;
+static constexpr int J3_STEP_PIN = 25;
+static constexpr int J3_DIR_PIN = 33;
 static constexpr int ENABLE_PIN = 13;
 static constexpr int J1_HOME_PIN = 32;
 static constexpr int J2_HOME_PIN = 35;
+static constexpr int J3_HOME_PIN = 34;
 static constexpr int ESTOP_PIN = 39;
 static constexpr int PICKUP_SENSOR_PIN = 36;
 static constexpr int MAGNET_PIN = 23;
 
-// Calibrate these values for the actual reductions and microstepping.
+// Calibrate these values for the actual reductions and microstepping / servo mapping.
 static constexpr float J1_STEPS_PER_DEG = 44.4444f;
 static constexpr float J2_STEPS_PER_DEG = 44.4444f;
+static constexpr float J3_STEPS_PER_DEG = 44.4444f;
 static constexpr uint32_t HOMING_TIMEOUT_MS = 30000;
 static constexpr size_t MAX_PACKET_BYTES = 240;
-static constexpr size_t MAX_WAYPOINTS = 4;
+// 6 numbers per waypoint; keep max 3 so ESP-NOW frames stay under 240 bytes.
+static constexpr size_t MAX_WAYPOINTS = 3;
+static constexpr size_t WAYPOINT_FIELDS = 6;
 
 struct Waypoint {
   float shoulderDeg;
   float elbowDeg;
+  float wristDeg;
   float fixedZCompatibility;
   uint32_t speedHz;
   uint32_t acceleration;
@@ -51,13 +61,14 @@ enum MotionState { IDLE, HOMING, TRAJECTORY, MAGNET_SETTLING, FAULTED };
 FastAccelStepperEngine stepperEngine;
 FastAccelStepper *j1 = nullptr;
 FastAccelStepper *j2 = nullptr;
+FastAccelStepper *j3 = nullptr;
 MotionState state = IDLE;
 Waypoint waypoints[MAX_WAYPOINTS];
 size_t waypointCount = 0;
 size_t waypointIndex = 0;
 uint32_t stateStartedMs = 0;
 uint32_t magnetSettleMs = 0;
-bool homeDone[2] = {false, false};
+bool homeDone[3] = {false, false, false};
 char activeId[20] = "";
 char lastCompletedId[20] = "";
 
@@ -81,6 +92,7 @@ static void sendStatus(const char *id, const char *status, const char *detail = 
 static void stopMotors() {
   if (j1) j1->forceStop();
   if (j2) j2->forceStop();
+  if (j3) j3->forceStop();
 }
 
 static void enterFault(const char *detail) {
@@ -108,18 +120,20 @@ static void startWaypoint(size_t index) {
   Waypoint &point = waypoints[index];
   configureMove(j1, lroundf(point.shoulderDeg * J1_STEPS_PER_DEG), point.speedHz, point.acceleration);
   configureMove(j2, lroundf(point.elbowDeg * J2_STEPS_PER_DEG), point.speedHz, point.acceleration);
+  configureMove(j3, lroundf(point.wristDeg * J3_STEPS_PER_DEG), point.speedHz, point.acceleration);
 }
 
 static bool allStopped() {
-  return !j1->isRunning() && !j2->isRunning();
+  return !j1->isRunning() && !j2->isRunning() && !j3->isRunning();
 }
 
 static void startHoming() {
   state = HOMING;
   stateStartedMs = millis();
-  homeDone[0] = homeDone[1] = false;
+  homeDone[0] = homeDone[1] = homeDone[2] = false;
   configureMove(j1, -200000, 800, 600);
   configureMove(j2, -200000, 800, 600);
+  configureMove(j3, -200000, 800, 600);
   sendStatus(activeId, "STARTED");
 }
 
@@ -127,20 +141,20 @@ static bool loadTrajectory(JsonVariantConst payload, bool parkCommand) {
   waypointCount = 0;
   if (parkCommand) {
     JsonArrayConst point = payload["p"].as<JsonArrayConst>();
-    if (point.size() != 5) return false;
+    if (point.size() != WAYPOINT_FIELDS) return false;
     waypoints[0] = {
       point[0].as<float>(), point[1].as<float>(), point[2].as<float>(),
-      point[3].as<uint32_t>(), point[4].as<uint32_t>()
+      point[3].as<float>(), point[4].as<uint32_t>(), point[5].as<uint32_t>()
     };
     waypointCount = 1;
   } else {
     JsonArrayConst points = payload["p"].as<JsonArrayConst>();
     if (points.size() == 0 || points.size() > MAX_WAYPOINTS) return false;
     for (JsonArrayConst point : points) {
-      if (point.size() != 5) return false;
+      if (point.size() != WAYPOINT_FIELDS) return false;
       waypoints[waypointCount++] = {
         point[0].as<float>(), point[1].as<float>(), point[2].as<float>(),
-        point[3].as<uint32_t>(), point[4].as<uint32_t>()
+        point[3].as<float>(), point[4].as<uint32_t>(), point[5].as<uint32_t>()
       };
     }
   }
@@ -250,6 +264,7 @@ void setup() {
   pinMode(MAGNET_PIN, OUTPUT);
   pinMode(J1_HOME_PIN, INPUT_PULLUP);
   pinMode(J2_HOME_PIN, INPUT_PULLUP);
+  pinMode(J3_HOME_PIN, INPUT_PULLUP);
   pinMode(ESTOP_PIN, INPUT_PULLUP);
   pinMode(PICKUP_SENSOR_PIN, INPUT_PULLUP);
   digitalWrite(MAGNET_PIN, LOW);
@@ -257,13 +272,15 @@ void setup() {
   stepperEngine.init();
   j1 = stepperEngine.stepperConnectToPin(J1_STEP_PIN);
   j2 = stepperEngine.stepperConnectToPin(J2_STEP_PIN);
-  if (!j1 || !j2) {
+  j3 = stepperEngine.stepperConnectToPin(J3_STEP_PIN);
+  if (!j1 || !j2 || !j3) {
     state = FAULTED;
     return;
   }
   j1->setDirectionPin(J1_DIR_PIN);
   j2->setDirectionPin(J2_DIR_PIN);
-  for (FastAccelStepper *motor : {j1, j2}) {
+  j3->setDirectionPin(J3_DIR_PIN);
+  for (FastAccelStepper *motor : {j1, j2, j3}) {
     motor->setEnablePin(ENABLE_PIN);
     motor->setAutoEnable(true);
   }
@@ -292,15 +309,15 @@ void loop() {
   }
 
   if (state == HOMING) {
-    FastAccelStepper *motors[] = {j1, j2};
-    int pins[] = {J1_HOME_PIN, J2_HOME_PIN};
-    for (int index = 0; index < 2; ++index) {
+    FastAccelStepper *motors[] = {j1, j2, j3};
+    int pins[] = {J1_HOME_PIN, J2_HOME_PIN, J3_HOME_PIN};
+    for (int index = 0; index < 3; ++index) {
       if (!homeDone[index] && digitalRead(pins[index]) == LOW) {
         motors[index]->forceStopAndNewPosition(0);
         homeDone[index] = true;
       }
     }
-    if (homeDone[0] && homeDone[1]) {
+    if (homeDone[0] && homeDone[1] && homeDone[2]) {
       finishCommand();
     } else if (millis() - stateStartedMs > HOMING_TIMEOUT_MS) {
       enterFault("homing timeout");

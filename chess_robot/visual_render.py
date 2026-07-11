@@ -363,12 +363,19 @@ class PygameRenderer:
         pygame = self.pygame
         arm_colors = {ArmId.WHITE: (96, 167, 255), ArmId.BLACK: (255, 109, 109)}
         for arm_id, arm in self.sim.arms.items():
-            base, elbow, tool = self.sim.forward_kinematics(arm_id, arm.pose)
+            base, elbow, wrist, tool = self.sim.forward_kinematics(arm_id, arm.pose)
             color = arm_colors[arm_id]
-            points = [self.viewport.screen(base), self.viewport.screen(elbow), self.viewport.screen(tool)]
+            points = [
+                self.viewport.screen(base),
+                self.viewport.screen(elbow),
+                self.viewport.screen(wrist),
+                self.viewport.screen(tool),
+            ]
             pygame.draw.lines(self.screen, (18, 20, 24), False, points, width=12)
             pygame.draw.lines(self.screen, color, False, points, width=7)
-            pygame.draw.circle(self.screen, color, points[1], self.viewport.length(10))
+            joint_r = self.viewport.length(9)
+            pygame.draw.circle(self.screen, color, points[1], joint_r)
+            pygame.draw.circle(self.screen, color, points[2], joint_r)
             pygame.draw.circle(
                 self.screen, (245, 221, 111), self.viewport.screen(arm.tool), self.viewport.length(9)
             )
@@ -579,6 +586,7 @@ class PygameRenderer:
                 ("speed_down", "−", True),
                 ("speed_0.5", "0.5×", abs(opts.speed - 0.5) < 0.05),
                 ("speed_1.0", "1×", abs(opts.speed - 1.0) < 0.05),
+                ("speed_2.0", "2×", abs(opts.speed - 2.0) < 0.05),
             ],
             height=28,
         )
@@ -587,8 +595,8 @@ class PygameRenderer:
             y,
             inner_w,
             [
-                ("speed_2.0", "2×", abs(opts.speed - 2.0) < 0.05),
-                ("speed_4.0", "4×", abs(opts.speed - 4.0) < 0.05),
+                ("speed_5.0", "5×", abs(opts.speed - 5.0) < 0.05),
+                ("speed_10.0", "10×", abs(opts.speed - 10.0) < 0.05),
                 ("speed_up", "+", True),
             ],
             height=28,
@@ -758,9 +766,11 @@ class PygameRenderer:
         pose = arm.pose
         joint1 = f"{pose.shoulder_deg:0.1f}°" if pose else "—"
         joint2 = f"{pose.elbow_deg:0.1f}°" if pose else "—"
+        joint3 = f"{pose.wrist_deg:0.1f}°" if pose else "—"
         rows = [
             ("Joint 1 (shoulder)", joint1),
             ("Joint 2 (elbow)", joint2),
+            ("Joint 3 (wrist)", joint3),
             ("End effector X", f"{arm.tool.x_mm:0.0f} mm"),
             ("End effector Y", f"{arm.tool.y_mm:0.0f} mm"),
         ]

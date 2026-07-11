@@ -115,17 +115,24 @@ def optimize_geometry_command(args: argparse.Namespace) -> int:
     write_report(result, Path(args.output))
     design = result.design
     evaluation = result.evaluation
-    print("PASS: certified mirrored SCARA geometry")
-    print(f"Links: {design.link_1_mm:.0f} mm / {design.link_2_mm:.0f} mm")
+    print("PASS: certified mirrored 3R arm geometry (MG995 180°)")
+    print(
+        f"Links: {design.link_1_mm:.0f} / {design.link_2_mm:.0f} / "
+        f"{design.link_3_mm:.0f} mm (unequal OK)"
+    )
     print(
         "White base: "
         f"({-design.base_x_mm:.0f}, {-design.base_setback_mm:.0f}) mm; "
         f"heading {design.forward_angle_deg:.0f} deg"
     )
     print(
-        "Joint windows: "
-        f"shoulder {design.shoulder_window_start_deg:.0f}..{design.shoulder_window_start_deg + 270:.0f}, "
-        f"elbow {design.elbow_window_start_deg:.0f}..{design.elbow_window_start_deg + 270:.0f} deg"
+        "Joint windows (180° each): "
+        f"shoulder {design.shoulder_window_start_deg:.0f}.."
+        f"{design.shoulder_window_start_deg + 180:.0f}, "
+        f"elbow {design.elbow_window_start_deg:.0f}.."
+        f"{design.elbow_window_start_deg + 180:.0f}, "
+        f"wrist {design.wrist_window_start_deg:.0f}.."
+        f"{design.wrist_window_start_deg + 180:.0f} deg"
     )
     print(
         f"Minimum headroom: {evaluation.min_joint_headroom_deg:.1f} deg; "

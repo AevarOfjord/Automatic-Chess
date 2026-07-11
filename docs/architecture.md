@@ -22,7 +22,7 @@ ChessMovePlanner ──► list[PhysicalTransfer]
 for each transfer:
    park opposite arm (keep-out)
    PuckTrajectoryPlanner (XY around other pucks)
-   SCARA IK waypoints
+   planar 3R IK waypoints
    GatewayTransport / MockGatewayTransport
    SET_MAGNET on/off
         │
@@ -50,7 +50,7 @@ commit board + inventory
 | `planning.py` | Legal move → physical transfers; reset evacuate/place |
 | `inventory.py` | Token IDs, locations, dead racks |
 | `trajectory.py` | Collision-free puck XY graph search |
-| `geometry.py` | Board mm frame + SCARA inverse kinematics |
+| `geometry.py` | Board mm frame + planar 3R inverse kinematics |
 | `hardware.py` | Lock, park policy, retries, magnet sequence |
 | `protocol.py` | Command/response JSON + journal |
 | `transport.py` | Serial / mock gateway |

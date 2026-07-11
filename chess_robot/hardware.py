@@ -76,12 +76,13 @@ class DualArmHardware:
 
     def _home_pose(self, arm: ArmId) -> JointPose:
         cfg = self.config.arm(arm)
-        return JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
+        return JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg, cfg.home_wrist_deg)
 
     def _trajectory(self, arm: ArmId, points: list[tuple[JointPose, float]]) -> None:
         # Compact waypoint arrays keep each command inside the conservative ESP-NOW payload limit.
-        for index in range(0, len(points), 4):
-            chunk = points[index : index + 4]
+        # Firmware accepts at most 3 waypoints of 6 fields each under the 240-byte cap.
+        for index in range(0, len(points), 3):
+            chunk = points[index : index + 3]
             payload = {"p": [pose.as_wire(z) for pose, z in chunk]}
             self._send(ArmCommand(arm, Action.EXECUTE_TRAJECTORY, payload))
             self.last_pose[arm] = chunk[-1][0]
@@ -106,10 +107,7 @@ class DualArmHardware:
         if pose is None:
             return False
         park_pose = self._home_pose(arm)
-        return (
-            math.hypot(pose.shoulder_deg - park_pose.shoulder_deg, pose.elbow_deg - park_pose.elbow_deg)
-            < 1.5
-        )
+        return pose.joint_distance(park_pose) < 2.0
 
     def ensure_parked(self, arm: ArmId) -> None:
         """Park an arm if it is not already near its park pose."""

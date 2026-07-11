@@ -24,10 +24,10 @@ class ProtocolTests(unittest.TestCase):
             Action.EXECUTE_TRAJECTORY,
             {
                 "p": [
-                    [10.0, 20.0, 0.0, 2400, 1200],
-                    [11.0, 21.0, 0.0, 2400, 1200],
-                    [12.0, 22.0, 0.0, 2400, 1200],
-                    [13.0, 23.0, 0.0, 2400, 1200],
+                    [10.0, 20.0, 30.0, 0.0, 2400, 1200],
+                    [11.0, 21.0, 31.0, 0.0, 2400, 1200],
+                    [12.0, 22.0, 32.0, 0.0, 2400, 1200],
+                    [13.0, 23.0, 33.0, 0.0, 2400, 1200],
                 ]
             },
         )
@@ -42,7 +42,7 @@ class ProtocolTests(unittest.TestCase):
         command = ArmCommand(
             ArmId.BLACK,
             Action.EXECUTE_TRAJECTORY,
-            {"p": [[float(i), float(i), 0.0, 2400, 1200] for i in range(20)]},
+            {"p": [[float(i), float(i), float(i), 0.0, 2400, 1200] for i in range(20)]},
         )
         with self.assertRaises(ValueError):
             command.to_wire(max_bytes=240)

@@ -69,14 +69,14 @@ class VisualChessRobotSimulator:
         self.current_locations = dict(self.inventory.locations)
         self.arms: dict[ArmId, VisualArm] = {}
         for arm in ArmId:
-            park = self.layout.park(arm)
             cfg = self.config.arm(arm)
-            pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
+            pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg, cfg.home_wrist_deg)
+            tool = ScaraKinematics(cfg).forward(pose)[-1]
             self.arms[arm] = VisualArm(
                 arm_id=arm,
-                tool=park,
+                tool=tool,
                 pose=pose,
-                z_mm=self.config.arm(arm).fixed_tool_z_mm,
+                z_mm=cfg.fixed_tool_z_mm,
                 target_label="folded home",
             )
 
@@ -130,12 +130,24 @@ class VisualChessRobotSimulator:
         self.stats.mode = "running"
         self.stats.message = "Running"
 
+    # Discrete animation speed steps used by the control board and +/- keys.
+    SPEED_PRESETS: tuple[float, ...] = (0.5, 1.0, 2.0, 5.0, 10.0)
+
     def set_speed(self, speed: float) -> None:
-        self.options.speed = max(0.1, min(8.0, float(speed)))
-        self.stats.message = f"Speed {self.options.speed:0.2f}×"
+        target = float(speed)
+        # Snap to the nearest allowed step (0.5 / 1 / 2 / 5 / 10).
+        self.options.speed = min(self.SPEED_PRESETS, key=lambda step: abs(step - target))
+        self.stats.message = f"Speed {self.options.speed:g}×"
 
     def nudge_speed(self, factor: float) -> None:
-        self.set_speed(self.options.speed * factor)
+        """Move one step up (factor > 1) or down (factor < 1) through SPEED_PRESETS."""
+        steps = self.SPEED_PRESETS
+        index = min(range(len(steps)), key=lambda i: abs(steps[i] - self.options.speed))
+        if factor > 1.0:
+            index = min(len(steps) - 1, index + 1)
+        else:
+            index = max(0, index - 1)
+        self.set_speed(steps[index])
 
     def toggle_auto_loop(self) -> None:
         self.options.auto_loop = not self.options.auto_loop
@@ -381,12 +393,10 @@ class VisualChessRobotSimulator:
     ) -> AnimationStep:
         cfg = self.config.arm(arm_id)
         current_pose = self.arms[arm_id].pose
-        home_pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg)
+        home_pose = JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg, cfg.home_wrist_deg)
         joint_distance = 180.0
         if current_pose is not None:
-            joint_distance = abs(home_pose.shoulder_deg - current_pose.shoulder_deg) + abs(
-                home_pose.elbow_deg - current_pose.elbow_deg
-            )
+            joint_distance = home_pose.joint_distance(current_pose)
         return AnimationStep(
             arm_id,
             label,
@@ -437,8 +447,10 @@ class VisualChessRobotSimulator:
                     + (step.end_pose.shoulder_deg - step.start_pose.shoulder_deg) * eased,
                     step.start_pose.elbow_deg
                     + (step.end_pose.elbow_deg - step.start_pose.elbow_deg) * eased,
+                    step.start_pose.wrist_deg
+                    + (step.end_pose.wrist_deg - step.start_pose.wrist_deg) * eased,
                 )
-                arm.tool = self.forward_kinematics(step.arm, arm.pose)[2]
+                arm.tool = self.forward_kinematics(step.arm, arm.pose)[-1]
             else:
                 arm.tool = step.end
         else:
@@ -567,27 +579,16 @@ class VisualChessRobotSimulator:
     def _distance(a: Point, b: Point) -> float:
         return math.hypot(a.x_mm - b.x_mm, a.y_mm - b.y_mm)
 
-    def forward_kinematics(self, arm_id: ArmId, pose: JointPose | None) -> tuple[Point, Point, Point]:
+    def forward_kinematics(
+        self, arm_id: ArmId, pose: JointPose | None
+    ) -> tuple[Point, Point, Point, Point]:
+        """Return base, elbow joint, wrist joint, and tool in world mm."""
         cfg = self.config.arm(arm_id)
         base = Point(cfg.base_x_mm, cfg.base_y_mm)
         if pose is None:
-            return base, base, self.arms[arm_id].tool
-        shoulder = math.radians(pose.shoulder_deg)
-        elbow = math.radians(pose.elbow_deg)
-        local_elbow = Point(cfg.link_1_mm * math.cos(shoulder), cfg.link_1_mm * math.sin(shoulder))
-        local_tool = Point(
-            local_elbow.x_mm + cfg.link_2_mm * math.cos(shoulder + elbow),
-            local_elbow.y_mm + cfg.link_2_mm * math.sin(shoulder + elbow),
-        )
-        orientation = math.radians(cfg.forward_angle_deg)
-
-        def rotate(local: Point) -> Point:
-            return Point(
-                base.x_mm + math.cos(orientation) * local.x_mm - math.sin(orientation) * local.y_mm,
-                base.y_mm + math.sin(orientation) * local.x_mm + math.cos(orientation) * local.y_mm,
-            )
-
-        return base, rotate(local_elbow), rotate(local_tool)
+            tool = self.arms[arm_id].tool
+            return base, base, base, tool
+        return ScaraKinematics(cfg).forward(pose)
 
 
 def run_visual_simulator(args: argparse.Namespace | None = None) -> None:

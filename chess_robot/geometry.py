@@ -18,17 +18,28 @@ class Point:
 
 @dataclass(frozen=True)
 class JointPose:
+    """Relative joint angles for a planar 3R arm (shoulder, elbow, wrist)."""
+
     shoulder_deg: float
     elbow_deg: float
+    wrist_deg: float = 0.0
 
     def as_wire(self, z_mm: float, speed: int = 2400, acceleration: int = 1200) -> list[float | int]:
         return [
             round(self.shoulder_deg, 3),
             round(self.elbow_deg, 3),
+            round(self.wrist_deg, 3),
             round(z_mm, 2),
             speed,
             acceleration,
         ]
+
+    def joint_distance(self, other: "JointPose") -> float:
+        return (
+            abs(self.shoulder_deg - other.shoulder_deg)
+            + abs(self.elbow_deg - other.elbow_deg)
+            + abs(self.wrist_deg - other.wrist_deg)
+        )
 
 
 @dataclass(frozen=True)
@@ -173,6 +184,16 @@ class BoardLayout:
 
 
 class ScaraKinematics:
+    """Planar 3R inverse kinematics for the dual-arm chess robot.
+
+    Positioning only (no tool orientation constraint). Samples the absolute
+    orientation of the distal link, reduces to classic 2R IK on links 1–2,
+    then recovers the wrist angle.
+    """
+
+    # Degrees between absolute-orientation samples for the distal link.
+    _PHI_STEP_DEG = 4.0
+
     def __init__(self, arm_config: ArmConfig):
         self.config = arm_config
 
@@ -189,20 +210,49 @@ class ScaraKinematics:
         return [angle_deg + 360.0 * turns for turns in range(first, last + 1)]
 
     @staticmethod
-    def _singularity_distance_deg(elbow_deg: float) -> float:
-        """Distance from straight (0) or folded (+/-180) SCARA singularities."""
-        wrapped = (elbow_deg + 180.0) % 360.0 - 180.0
+    def _singularity_distance_deg(joint_deg: float) -> float:
+        """Distance from straight (0) or folded (+/-180) planar singularities."""
+        wrapped = (joint_deg + 180.0) % 360.0 - 180.0
         return min(abs(wrapped), abs(abs(wrapped) - 180.0))
 
     def _joint_headroom_deg(self, pose: JointPose) -> float:
         shoulder_low, shoulder_high = self.config.shoulder_limits_deg
         elbow_low, elbow_high = self.config.elbow_limits_deg
+        wrist_low, wrist_high = self.config.wrist_limits_deg
         return min(
             pose.shoulder_deg - shoulder_low,
             shoulder_high - pose.shoulder_deg,
             pose.elbow_deg - elbow_low,
             elbow_high - pose.elbow_deg,
+            pose.wrist_deg - wrist_low,
+            wrist_high - pose.wrist_deg,
         )
+
+    def forward(self, pose: JointPose) -> tuple[Point, Point, Point, Point]:
+        """Return base, elbow joint, wrist joint, and tool in world mm."""
+        cfg = self.config
+        base = Point(cfg.base_x_mm, cfg.base_y_mm)
+        shoulder = math.radians(pose.shoulder_deg)
+        elbow = math.radians(pose.elbow_deg)
+        wrist = math.radians(pose.wrist_deg)
+        local_elbow = Point(cfg.link_1_mm * math.cos(shoulder), cfg.link_1_mm * math.sin(shoulder))
+        local_mid = Point(
+            local_elbow.x_mm + cfg.link_2_mm * math.cos(shoulder + elbow),
+            local_elbow.y_mm + cfg.link_2_mm * math.sin(shoulder + elbow),
+        )
+        local_tool = Point(
+            local_mid.x_mm + cfg.link_3_mm * math.cos(shoulder + elbow + wrist),
+            local_mid.y_mm + cfg.link_3_mm * math.sin(shoulder + elbow + wrist),
+        )
+        orientation = math.radians(cfg.forward_angle_deg)
+
+        def rotate(local: Point) -> Point:
+            return Point(
+                base.x_mm + math.cos(orientation) * local.x_mm - math.sin(orientation) * local.y_mm,
+                base.y_mm + math.sin(orientation) * local.x_mm + math.cos(orientation) * local.y_mm,
+            )
+
+        return base, rotate(local_elbow), rotate(local_mid), rotate(local_tool)
 
     def inverse(self, point: Point, preferred: JointPose | None = None) -> Reachability:
         dx = point.x_mm - self.config.base_x_mm
@@ -210,38 +260,63 @@ class ScaraKinematics:
         orientation = math.radians(self.config.forward_angle_deg)
         x = math.cos(-orientation) * dx - math.sin(-orientation) * dy
         y = math.sin(-orientation) * dx + math.cos(-orientation) * dy
-        l1, l2 = self.config.link_1_mm, self.config.link_2_mm
-        cos_elbow = (x * x + y * y - l1 * l1 - l2 * l2) / (2.0 * l1 * l2)
-        if cos_elbow < -1.000001 or cos_elbow > 1.000001:
+        l1, l2, l3 = self.config.link_1_mm, self.config.link_2_mm, self.config.link_3_mm
+        radius = math.hypot(x, y)
+        max_reach = l1 + l2 + l3
+        min_reach = max(0.0, max(l1, l2, l3) - (l1 + l2 + l3 - max(l1, l2, l3)))
+        if radius > max_reach + 1e-6 or radius < min_reach - 1e-6:
             return Reachability(False, None, "outside radial workspace")
-        cos_elbow = max(-1.0, min(1.0, cos_elbow))
+
         candidates: list[tuple[JointPose, float, float]] = []
-        for elbow_rad in (math.acos(cos_elbow), -math.acos(cos_elbow)):
-            shoulder_rad = math.atan2(y, x) - math.atan2(
-                l2 * math.sin(elbow_rad), l1 + l2 * math.cos(elbow_rad)
-            )
-            shoulder_deg = math.degrees(shoulder_rad)
-            elbow_deg = math.degrees(elbow_rad)
-            for motor_shoulder in self._equivalent_angles(shoulder_deg, self.config.shoulder_limits_deg):
-                for motor_elbow in self._equivalent_angles(elbow_deg, self.config.elbow_limits_deg):
-                    pose = JointPose(motor_shoulder, motor_elbow)
-                    headroom = self._joint_headroom_deg(pose)
-                    singularity_distance = self._singularity_distance_deg(motor_elbow)
-                    if headroom < self.config.joint_limit_margin_deg:
-                        continue
-                    if singularity_distance < self.config.singularity_margin_deg:
-                        continue
-                    distance = 0.0
-                    if preferred:
-                        distance = abs(pose.shoulder_deg - preferred.shoulder_deg) + abs(
-                            pose.elbow_deg - preferred.elbow_deg
-                        )
-                    candidates.append((pose, distance, singularity_distance))
+        phi = -math.pi
+        phi_step = math.radians(self._PHI_STEP_DEG)
+        while phi <= math.pi + 1e-9:
+            wrist_x = x - l3 * math.cos(phi)
+            wrist_y = y - l3 * math.sin(phi)
+            r2 = wrist_x * wrist_x + wrist_y * wrist_y
+            cos_elbow = (r2 - l1 * l1 - l2 * l2) / (2.0 * l1 * l2)
+            if -1.000001 <= cos_elbow <= 1.000001:
+                cos_elbow = max(-1.0, min(1.0, cos_elbow))
+                for elbow_rad in (math.acos(cos_elbow), -math.acos(cos_elbow)):
+                    shoulder_rad = math.atan2(wrist_y, wrist_x) - math.atan2(
+                        l2 * math.sin(elbow_rad), l1 + l2 * math.cos(elbow_rad)
+                    )
+                    wrist_rad = phi - (shoulder_rad + elbow_rad)
+                    shoulder_deg = math.degrees(shoulder_rad)
+                    elbow_deg = math.degrees(elbow_rad)
+                    wrist_deg = math.degrees(wrist_rad)
+                    for motor_shoulder in self._equivalent_angles(
+                        shoulder_deg, self.config.shoulder_limits_deg
+                    ):
+                        for motor_elbow in self._equivalent_angles(
+                            elbow_deg, self.config.elbow_limits_deg
+                        ):
+                            for motor_wrist in self._equivalent_angles(
+                                wrist_deg, self.config.wrist_limits_deg
+                            ):
+                                pose = JointPose(motor_shoulder, motor_elbow, motor_wrist)
+                                headroom = self._joint_headroom_deg(pose)
+                                singularity_distance = min(
+                                    self._singularity_distance_deg(motor_elbow),
+                                    self._singularity_distance_deg(motor_wrist),
+                                )
+                                if headroom < self.config.joint_limit_margin_deg:
+                                    continue
+                                if singularity_distance < self.config.singularity_margin_deg:
+                                    continue
+                                distance = 0.0
+                                if preferred:
+                                    distance = pose.joint_distance(preferred)
+                                candidates.append((pose, distance, singularity_distance))
+            phi += phi_step
+
         if not candidates:
             return Reachability(False, None, "joint limits or safety margin")
         pose, _, singularity_distance = min(
             candidates,
-            key=lambda item: item[1] if preferred else -min(self._joint_headroom_deg(item[0]), item[2]),
+            key=lambda item: item[1]
+            if preferred
+            else -min(self._joint_headroom_deg(item[0]), item[2]),
         )
         return Reachability(
             True,
@@ -261,7 +336,7 @@ def validate_layout(config: RobotConfig) -> dict[ArmId, dict[str, Reachability]]
                 cfg = config.arm(arm)
                 report[arm][name] = Reachability(
                     True,
-                    JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg),
+                    JointPose(cfg.home_shoulder_deg, cfg.home_elbow_deg, cfg.home_wrist_deg),
                     "stowed home",
                     1.0,
                 )

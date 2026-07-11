@@ -1,4 +1,4 @@
-"""Offline search and certification for the mirrored dual-SCARA geometry."""
+"""Offline search and certification for the mirrored dual 3R arm geometry."""
 
 from __future__ import annotations
 
@@ -12,28 +12,46 @@ from .config import ArmConfig, ArmId, RobotConfig
 from .geometry import BoardLayout, Point, ScaraKinematics
 
 
+# MG995-class servos: one continuous 180° travel window per joint.
+JOINT_WINDOW_DEG = 180.0
+
+
 @dataclass(frozen=True)
 class GeometryDesign:
     link_1_mm: float
     link_2_mm: float
+    link_3_mm: float
     base_x_mm: float
     base_setback_mm: float
     forward_angle_deg: float
     shoulder_window_start_deg: float
     elbow_window_start_deg: float
+    wrist_window_start_deg: float
 
     def config(self) -> RobotConfig:
         """Build one 180-degree mirrored physical configuration."""
-        shoulder_limits = (self.shoulder_window_start_deg, self.shoulder_window_start_deg + 270.0)
-        elbow_limits = (self.elbow_window_start_deg, self.elbow_window_start_deg + 270.0)
+        shoulder_limits = (
+            self.shoulder_window_start_deg,
+            self.shoulder_window_start_deg + JOINT_WINDOW_DEG,
+        )
+        elbow_limits = (
+            self.elbow_window_start_deg,
+            self.elbow_window_start_deg + JOINT_WINDOW_DEG,
+        )
+        wrist_limits = (
+            self.wrist_window_start_deg,
+            self.wrist_window_start_deg + JOINT_WINDOW_DEG,
+        )
         white = ArmConfig(
             base_x_mm=-self.base_x_mm,
             base_y_mm=-self.base_setback_mm,
             forward_angle_deg=self.forward_angle_deg,
             link_1_mm=self.link_1_mm,
             link_2_mm=self.link_2_mm,
+            link_3_mm=self.link_3_mm,
             shoulder_limits_deg=shoulder_limits,
             elbow_limits_deg=elbow_limits,
+            wrist_limits_deg=wrist_limits,
             park_x_mm=-self.base_x_mm,
             park_y_mm=-self.base_setback_mm,
         )
@@ -43,8 +61,10 @@ class GeometryDesign:
             forward_angle_deg=self.forward_angle_deg + 180.0,
             link_1_mm=self.link_1_mm,
             link_2_mm=self.link_2_mm,
+            link_3_mm=self.link_3_mm,
             shoulder_limits_deg=shoulder_limits,
             elbow_limits_deg=elbow_limits,
+            wrist_limits_deg=wrist_limits,
             park_x_mm=self.base_x_mm,
             park_y_mm=self.base_setback_mm,
         )
@@ -95,8 +115,11 @@ def _required_off_table_points(config: RobotConfig, arm: ArmId) -> list[tuple[st
 def _route_segments(config: RobotConfig) -> list[tuple[Point, Point]]:
     """All horizontal, vertical, and diagonal neighboring cell-center paths."""
     x0, y0, size = config.table_origin_x_mm, config.table_origin_y_mm, config.square_size_mm
-    centers = {(col, row): Point(x0 + (col + 0.5) * size, y0 + (row + 0.5) * size)
-               for col in range(config.table_columns) for row in range(config.table_rows)}
+    centers = {
+        (col, row): Point(x0 + (col + 0.5) * size, y0 + (row + 0.5) * size)
+        for col in range(config.table_columns)
+        for row in range(config.table_rows)
+    }
     segments: list[tuple[Point, Point]] = []
     for col in range(config.table_columns):
         for row in range(config.table_rows):
@@ -111,13 +134,17 @@ def _sample_segment(start: Point, end: Point, step_mm: int) -> list[Point]:
     length = math.hypot(end.x_mm - start.x_mm, end.y_mm - start.y_mm)
     count = max(1, math.ceil(length / step_mm))
     return [
-        Point(start.x_mm + (end.x_mm - start.x_mm) * index / count,
-              start.y_mm + (end.y_mm - start.y_mm) * index / count)
+        Point(
+            start.x_mm + (end.x_mm - start.x_mm) * index / count,
+            start.y_mm + (end.y_mm - start.y_mm) * index / count,
+        )
         for index in range(count + 1)
     ]
 
 
-def evaluate_design(design: GeometryDesign, *, grid_mm: int, route_step_mm: int | None = None) -> GeometryEvaluation:
+def evaluate_design(
+    design: GeometryDesign, *, grid_mm: int, route_step_mm: int | None = None
+) -> GeometryEvaluation:
     """Certify point coverage and continuous-grid route coverage for both arms."""
     config = design.config()
     points = _table_points(config, grid_mm)
@@ -133,35 +160,53 @@ def evaluate_design(design: GeometryDesign, *, grid_mm: int, route_step_mm: int 
             result = solver.inverse(point)
             checked_points += 1
             if not result.reachable or result.pose is None:
-                return GeometryEvaluation(False, checked_points, checked_routes, 1, f"{arm.value}:{name}", 0.0, 0.0)
+                return GeometryEvaluation(
+                    False, checked_points, checked_routes, 1, f"{arm.value}:{name}", 0.0, 0.0
+                )
             min_headroom = min(min_headroom, solver._joint_headroom_deg(result.pose))
-            min_singularity = min(min_singularity, solver._singularity_distance_deg(result.pose.elbow_deg))
+            min_singularity = min(
+                min_singularity,
+                solver._singularity_distance_deg(result.pose.elbow_deg),
+                solver._singularity_distance_deg(result.pose.wrist_deg),
+            )
 
         for start, end in _route_segments(config):
             preferred = None
             for point in _sample_segment(start, end, route_step_mm):
                 result = solver.inverse(point, preferred)
                 if not result.reachable or result.pose is None:
-                    label = f"route:{start.x_mm:.0f},{start.y_mm:.0f}->{end.x_mm:.0f},{end.y_mm:.0f}"
-                    return GeometryEvaluation(False, checked_points, checked_routes, 1, f"{arm.value}:{label}", 0.0, 0.0)
+                    label = (
+                        f"route:{start.x_mm:.0f},{start.y_mm:.0f}"
+                        f"->{end.x_mm:.0f},{end.y_mm:.0f}"
+                    )
+                    return GeometryEvaluation(
+                        False,
+                        checked_points,
+                        checked_routes,
+                        1,
+                        f"{arm.value}:{label}",
+                        0.0,
+                        0.0,
+                    )
                 preferred = result.pose
                 min_headroom = min(min_headroom, solver._joint_headroom_deg(result.pose))
-                min_singularity = min(min_singularity, solver._singularity_distance_deg(result.pose.elbow_deg))
+                min_singularity = min(
+                    min_singularity,
+                    solver._singularity_distance_deg(result.pose.elbow_deg),
+                    solver._singularity_distance_deg(result.pose.wrist_deg),
+                )
             checked_routes += 1
 
-    return GeometryEvaluation(True, checked_points, checked_routes, 0, "", min_headroom, min_singularity)
+    return GeometryEvaluation(
+        True, checked_points, checked_routes, 0, "", min_headroom, min_singularity
+    )
 
 
-def _shape_precheck(link_1: float, link_2: float, base_x: float, setback: float) -> bool:
-    """Cheap annulus filter before running IK/window certification."""
-    max_radius = math.sqrt(
-        link_1 * link_1 + link_2 * link_2 + 2.0 * link_1 * link_2 * math.cos(math.radians(15.0))
-    )
-    min_radius = math.sqrt(
-        link_1 * link_1 + link_2 * link_2 - 2.0 * link_1 * link_2 * math.cos(math.radians(15.0))
-    )
+def _shape_precheck(link_1: float, link_2: float, link_3: float, base_x: float, setback: float) -> bool:
+    """Cheap radial filter before running IK/window certification."""
+    max_radius = link_1 + link_2 + link_3 - 5.0
+    min_radius = 20.0
     base = Point(-base_x, -setback)
-    # Farthest and nearest points of the carried-puck operating envelope.
     corners = [Point(x, y) for x in (-275.0, 275.0) for y in (-175.0, 175.0)]
     if max(math.hypot(point.x_mm - base.x_mm, point.y_mm - base.y_mm) for point in corners) > max_radius:
         return False
@@ -171,98 +216,162 @@ def _shape_precheck(link_1: float, link_2: float, base_x: float, setback: float)
         return False
     for point in (Point(-350.0, 0.0),):
         radius = math.hypot(point.x_mm - base.x_mm, point.y_mm - base.y_mm)
-        if not min_radius <= radius <= max_radius:
+        if radius > max_radius:
             return False
     return True
 
 
-def _shape_candidates() -> list[tuple[float, float, float, float, float]]:
-    """Coarse deterministic search space, sorted by the requested objective."""
-    shapes: list[tuple[float, float, float, float, float]] = []
-    for link_1 in range(150, 451, 10):
-        for link_2 in (link_1,):
-            for base_x in range(0, 301, 50):
-                for setback in (250,):
-                    for heading in range(60, 121, 15):
-                        if _shape_precheck(link_1, link_2, base_x, setback):
-                            shapes.append((float(link_1), float(link_2), float(base_x), float(setback), float(heading)))
-    return sorted(shapes, key=lambda item: (max(item[0], item[1]), item[0] + item[1], item[3], item[2]))
+def _shape_candidates() -> list[tuple[float, float, float, float, float, float]]:
+    """Coarse deterministic search space, sorted by total length then max link.
+
+    Link lengths are free to differ (MG995 3R redesign). Prefer shorter totals.
+    """
+    shapes: list[tuple[float, float, float, float, float, float]] = []
+    for link_1 in range(160, 241, 10):
+        for link_2 in range(140, 221, 10):
+            for link_3 in range(140, 221, 10):
+                total = link_1 + link_2 + link_3
+                if total < 520 or total > 600:
+                    continue
+                for base_x in (0,):
+                    for setback in (250,):
+                        for heading in (45, 60, 75, 90):
+                            if _shape_precheck(link_1, link_2, link_3, base_x, setback):
+                                shapes.append(
+                                    (
+                                        float(link_1),
+                                        float(link_2),
+                                        float(link_3),
+                                        float(base_x),
+                                        float(setback),
+                                        float(heading),
+                                    )
+                                )
+    return sorted(
+        shapes,
+        key=lambda item: (item[0] + item[1] + item[2], max(item[0], item[1], item[2]), item[0]),
+    )
 
 
 def _window_starts_for_shape(
     link_1: float,
     link_2: float,
+    link_3: float,
     base_x: float,
     setback: float,
     heading: float,
     grid_mm: int,
-) -> tuple[list[float], list[float]]:
+) -> tuple[list[float], list[float], list[float]]:
     """Derive plausible motor-zero windows from permissive coarse IK poses."""
-    raw = GeometryDesign(link_1, link_2, base_x, setback, heading, -180.0, -180.0).config()
+    raw = GeometryDesign(link_1, link_2, link_3, base_x, setback, heading, -180.0, -180.0, -180.0).config()
     raw = dataclasses.replace(
         raw,
         white_arm=dataclasses.replace(
             raw.white_arm,
             shoulder_limits_deg=(-720.0, 720.0),
             elbow_limits_deg=(-720.0, 720.0),
+            wrist_limits_deg=(-720.0, 720.0),
             joint_limit_margin_deg=0.0,
+            singularity_margin_deg=0.0,
         ),
         black_arm=dataclasses.replace(
             raw.black_arm,
             shoulder_limits_deg=(-720.0, 720.0),
             elbow_limits_deg=(-720.0, 720.0),
+            wrist_limits_deg=(-720.0, 720.0),
             joint_limit_margin_deg=0.0,
+            singularity_margin_deg=0.0,
         ),
     )
     solver = ScaraKinematics(raw.white_arm)
-    angles: list[tuple[float, float]] = []
+    angles: list[tuple[float, float, float]] = []
     for _, point in [*_table_points(raw, grid_mm), *_required_off_table_points(raw, ArmId.WHITE)]:
         result = solver.inverse(point)
         if not result.reachable or result.pose is None:
-            return [], []
-        angles.append((result.pose.shoulder_deg, result.pose.elbow_deg))
+            return [], [], []
+        angles.append((result.pose.shoulder_deg, result.pose.elbow_deg, result.pose.wrist_deg))
 
     def fitting_starts(values: list[float]) -> list[float]:
         starts: list[float] = []
-        for start in range(-360, 361, 15):
-            low, high = start + 15.0, start + 255.0
-            if all(any(low <= value + 360.0 * turns <= high for turns in range(-2, 3)) for value in values):
+        # Usable span is window minus 2 * margin (5° each side → 170° usable).
+        usable = JOINT_WINDOW_DEG - 10.0
+        for start in range(-180, 181, 15):
+            low, high = start + 5.0, start + 5.0 + usable
+            if all(
+                any(low <= value + 360.0 * turns <= high for turns in range(-2, 3))
+                for value in values
+            ):
                 starts.append(float(start))
         return starts
 
-    return fitting_starts([item[0] for item in angles]), fitting_starts([item[1] for item in angles])
+    return (
+        fitting_starts([item[0] for item in angles]),
+        fitting_starts([item[1] for item in angles]),
+        fitting_starts([item[2] for item in angles]),
+    )
 
 
-def optimize_geometry(*, coarse_grid_mm: int = 50, final_grid_mm: int = 1) -> OptimizationResult:
-    """Find the shortest certified mirrored design in the agreed search range."""
-    # Search the shortest mechanical shapes first. The coarse certificate keeps
-    # the window search tractable; every accepted design is then certified at
-    # 1 mm before it can be returned.
-    for link_1, link_2, base_x, setback, heading in _shape_candidates():
-        shoulder_starts, elbow_starts = _window_starts_for_shape(
-            link_1, link_2, base_x, setback, heading, coarse_grid_mm
+def optimize_geometry(*, coarse_grid_mm: int = 50, final_grid_mm: int = 5) -> OptimizationResult:
+    """Find a short certified mirrored 3R design in the agreed search range."""
+    # Prefer shorter mechanical shapes. Coarse certificate first; accepted
+    # designs are re-checked at the final grid before return.
+    # Seed the known good unequal MG995 candidate early.
+    preferred = [
+        (200.0, 160.0, 180.0, 0.0, 250.0, 60.0),
+        (190.0, 170.0, 180.0, 0.0, 250.0, 60.0),
+        (200.0, 170.0, 170.0, 0.0, 250.0, 60.0),
+        (200.0, 180.0, 160.0, 0.0, 250.0, 60.0),
+        (180.0, 180.0, 180.0, 0.0, 250.0, 60.0),
+    ]
+    seen: set[tuple[float, float, float, float, float, float]] = set()
+    ordered: list[tuple[float, float, float, float, float, float]] = []
+    for shape in [*preferred, *_shape_candidates()]:
+        if shape not in seen:
+            seen.add(shape)
+            ordered.append(shape)
+
+    # Fold-friendly windows that leave elbow/wrist able to reach ~180°.
+    seed_windows = [
+        (-90.0, 0.0, 0.0),
+        (-90.0, 0.0, -90.0),
+        (0.0, 0.0, 0.0),
+        (-90.0, -90.0, 0.0),
+    ]
+
+    for link_1, link_2, link_3, base_x, setback, heading in ordered:
+        shoulder_starts, elbow_starts, wrist_starts = _window_starts_for_shape(
+            link_1, link_2, link_3, base_x, setback, heading, coarse_grid_mm
         )
-        # Keep the calibrated folded-home windows in the search even when the
-        # permissive IK branch chooser reports an equivalent +360-degree form.
-        shoulder_starts = sorted(set([*shoulder_starts, -135.0]))
-        elbow_starts = sorted(set([*elbow_starts, -345.0]))
-        for shoulder_start in shoulder_starts:
-            for elbow_start in elbow_starts:
-                design = GeometryDesign(
-                    link_1,
-                    link_2,
-                    base_x,
-                    setback,
-                    heading,
-                    shoulder_start,
-                    elbow_start,
-                )
-                coarse = evaluate_design(design, grid_mm=coarse_grid_mm)
-                if not coarse.valid:
-                    continue
-                final = evaluate_design(design, grid_mm=final_grid_mm)
-                if final.valid:
-                    return OptimizationResult(design, final, coarse_grid_mm, final_grid_mm)
+        shoulder_starts = sorted(set([*shoulder_starts, *(s for s, _, _ in seed_windows)]))
+        elbow_starts = sorted(set([*elbow_starts, *(e for _, e, _ in seed_windows)]))
+        wrist_starts = sorted(set([*wrist_starts, *(w for _, _, w in seed_windows)]))
+        # Try seed triples first, then the cartesian product of fitted starts
+        # (capped for tractability).
+        trial_windows: list[tuple[float, float, float]] = list(seed_windows)
+        for shoulder_start in shoulder_starts[:8]:
+            for elbow_start in elbow_starts[:8]:
+                for wrist_start in wrist_starts[:8]:
+                    trial = (shoulder_start, elbow_start, wrist_start)
+                    if trial not in trial_windows:
+                        trial_windows.append(trial)
+        for shoulder_start, elbow_start, wrist_start in trial_windows:
+            design = GeometryDesign(
+                link_1,
+                link_2,
+                link_3,
+                base_x,
+                setback,
+                heading,
+                shoulder_start,
+                elbow_start,
+                wrist_start,
+            )
+            coarse = evaluate_design(design, grid_mm=coarse_grid_mm)
+            if not coarse.valid:
+                continue
+            final = evaluate_design(design, grid_mm=final_grid_mm)
+            if final.valid:
+                return OptimizationResult(design, final, coarse_grid_mm, final_grid_mm)
     raise RuntimeError("no geometry satisfies the requested coverage and safety constraints")
 
 

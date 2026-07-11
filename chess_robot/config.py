@@ -17,25 +17,32 @@ class ArmId(str, Enum):
 
 @dataclass(frozen=True)
 class ArmConfig:
+    """Planar 3R arm geometry for MG995-class 180° servos.
+
+    Joints are relative angles (shoulder, elbow, wrist). Each motor has one
+    continuous 180° travel window; the kinematics layer expands geometric IK
+    angles by ±360° to find an equivalent pose inside those windows.
+    """
+
     base_x_mm: float
     base_y_mm: float
     forward_angle_deg: float
-    link_1_mm: float = 300.0
-    link_2_mm: float = 300.0
-    # Each motor has one continuous 270-degree travel window. Values are
-    # motor-space angles; the kinematics layer expands geometric IK angles by
-    # +/-360 degrees to find an equivalent pose inside these windows.
-    shoulder_limits_deg: tuple[float, float] = (-135.0, 135.0)
-    elbow_limits_deg: tuple[float, float] = (-70.0, 200.0)
-    joint_limit_margin_deg: float = 15.0
-    singularity_margin_deg: float = 15.0
-    # A deliberately singular stowed pose used only while the opposite arm is
-    # active. Motion to/from it is explicit; normal table motion still keeps
-    # the safety margin above.
-    # With the mirrored 60/-120 degree base headings, -60 stores both folded
-    # link pairs parallel to the long table edge, entirely outside the board.
+    link_1_mm: float = 200.0
+    link_2_mm: float = 160.0
+    link_3_mm: float = 180.0
+    shoulder_limits_deg: tuple[float, float] = (-90.0, 90.0)
+    elbow_limits_deg: tuple[float, float] = (0.0, 180.0)
+    wrist_limits_deg: tuple[float, float] = (0.0, 180.0)
+    # Servo end-stops are hard; keep a small operational reserve inside the
+    # 180° window so commanded targets never ride the mechanical limit.
+    joint_limit_margin_deg: float = 5.0
+    singularity_margin_deg: float = 5.0
+    # Folded rest used only while the opposite arm is active. Elbow/wrist at
+    # the far end of their 180° windows zigzag the three links outside the
+    # board along the long table edge (with the mirrored base headings).
     home_shoulder_deg: float = -60.0
-    home_elbow_deg: float = -180.0
+    home_elbow_deg: float = 180.0
+    home_wrist_deg: float = 180.0
     fixed_tool_z_mm: float = 0.0
     park_x_mm: float = 200.0
     park_y_mm: float = -30.0
@@ -60,20 +67,22 @@ class RobotConfig:
     magnet_release_settle_s: float = 0.5
     max_wire_bytes: int = 240
     journal_path: Path = Path("runtime_data/command_journal.jsonl")
-    # Certified mirrored geometry from ``optimize-geometry``. Base centers
-    # are exactly 50mm beyond the table edge. The 270mm links cover every
-    # usable grid center and adjacent-grid route with >=15 degrees of
-    # operational reserve; the separate folded home pose is used only while
-    # waiting for the opposite arm.
+    # Certified mirrored 3-link geometry for MG995 180° servos. Base centers
+    # sit 50 mm beyond the table edge. Unequal links (200 / 160 / 180 mm)
+    # cover every usable grid center and adjacent-grid route with >=5° of
+    # operational reserve; the folded home pose is used only while waiting
+    # for the opposite arm.
     white_arm: ArmConfig = field(
         default_factory=lambda: ArmConfig(
             base_x_mm=0.0,
             base_y_mm=-250.0,
             forward_angle_deg=60.0,
-            link_1_mm=270.0,
-            link_2_mm=270.0,
-            shoulder_limits_deg=(-135.0, 135.0),
-            elbow_limits_deg=(-345.0, -75.0),
+            link_1_mm=200.0,
+            link_2_mm=160.0,
+            link_3_mm=180.0,
+            shoulder_limits_deg=(-90.0, 90.0),
+            elbow_limits_deg=(0.0, 180.0),
+            wrist_limits_deg=(0.0, 180.0),
             park_x_mm=0.0,
             park_y_mm=-250.0,
         )
@@ -83,10 +92,12 @@ class RobotConfig:
             base_x_mm=0.0,
             base_y_mm=250.0,
             forward_angle_deg=-120.0,
-            link_1_mm=270.0,
-            link_2_mm=270.0,
-            shoulder_limits_deg=(-135.0, 135.0),
-            elbow_limits_deg=(-345.0, -75.0),
+            link_1_mm=200.0,
+            link_2_mm=160.0,
+            link_3_mm=180.0,
+            shoulder_limits_deg=(-90.0, 90.0),
+            elbow_limits_deg=(0.0, 180.0),
+            wrist_limits_deg=(0.0, 180.0),
             park_x_mm=0.0,
             park_y_mm=250.0,
         )
