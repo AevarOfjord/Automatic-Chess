@@ -55,11 +55,13 @@ class BoardLayout:
 
     Grid naming (all 0-based indices converted to 1-based labels):
 
-    - **Table columns** ``C1…C12`` left → right (+X).
+    - **Table columns** ``C1…C14`` left → right (+X).
     - **Table rows** ``R1…R8`` bottom → top (+Y), same sense as chess ranks.
-    - **Chess play area** occupies ``C3…C10`` = files ``a…h``, ranks ``1…8``.
     - **White dead rack** ``C1–C2`` labeled ``W1…W16`` (fills top → bottom).
-    - **Black dead rack** ``C11–C12`` labeled ``B1…B16`` (fills top → bottom).
+    - **Empty separator** ``C3`` between white rack and the board.
+    - **Chess play area** occupies ``C4…C11`` = files ``a…h``, ranks ``1…8``.
+    - **Empty separator** ``C12`` between the board and black rack.
+    - **Black dead rack** ``C13–C14`` labeled ``B1…B16`` (fills top → bottom).
     """
 
     def __init__(self, config: RobotConfig):
@@ -76,7 +78,7 @@ class BoardLayout:
         return self.chess_start_col + self.config.board_squares
 
     def column_label(self, table_col: int) -> str:
-        """Human label for a 0-based table column (``C1``…``C12``)."""
+        """Human label for a 0-based table column (``C1``…``C14``)."""
         if not 0 <= table_col < self.config.table_columns:
             raise ValueError(f"table column out of range: {table_col}")
         return f"C{table_col + 1}"
@@ -99,7 +101,8 @@ class BoardLayout:
     def dead_slot_at_cell(self, table_col: int, row_from_bottom: int) -> tuple[ArmId, int] | None:
         """Return ``(arm, 0-based index)`` if the cell is a dead-rack slot."""
         row_from_top = self.config.table_rows - 1 - row_from_bottom
-        # White rack: C1–C2 (columns 0–1), Black rack: C11–C12.
+        # White rack: C1–C2 (columns 0–1). Black rack: last two columns (C13–C14).
+        # Separator columns (C3, C12) and the chess area are not dead slots.
         if 0 <= table_col <= 1:
             arm = ArmId.WHITE
             col_in_rack = table_col
@@ -157,9 +160,12 @@ class BoardLayout:
         return dead_label(arm, index)
 
     def buffer(self, arm: ArmId) -> Point:
-        # Table-relative staging points just off the board's left/right edge.
+        # Staging points 50 mm outside the table's left/right edges, mid-height.
         ox, oy = self.config.table_origin_x_mm, self.config.table_origin_y_mm
-        return Point(ox - 50.0, oy + 200.0) if arm is ArmId.WHITE else Point(ox + 450.0, oy + 200.0)
+        mid_y = oy + self.config.table_height_mm / 2.0
+        if arm is ArmId.WHITE:
+            return Point(ox - 50.0, mid_y)
+        return Point(ox + self.config.table_width_mm + 50.0, mid_y)
 
     def location(self, name: str) -> Point:
         parts = name.split(":")

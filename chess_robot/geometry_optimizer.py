@@ -207,14 +207,18 @@ def _shape_precheck(link_1: float, link_2: float, link_3: float, base_x: float, 
     max_radius = link_1 + link_2 + link_3 - 5.0
     min_radius = 20.0
     base = Point(-base_x, -setback)
-    corners = [Point(x, y) for x in (-275.0, 275.0) for y in (-175.0, 175.0)]
+    # Envelope of outermost cell centers on the default 14×8 table (50 mm cells).
+    half_w = 325.0  # ± (700/2 - 25)
+    half_h = 175.0  # ± (400/2 - 25)
+    corners = [Point(x, y) for x in (-half_w, half_w) for y in (-half_h, half_h)]
     if max(math.hypot(point.x_mm - base.x_mm, point.y_mm - base.y_mm) for point in corners) > max_radius:
         return False
-    nearest_x = min(max(base.x_mm, -275.0), 275.0)
-    nearest_y = min(max(base.y_mm, -175.0), 175.0)
+    nearest_x = min(max(base.x_mm, -half_w), half_w)
+    nearest_y = min(max(base.y_mm, -half_h), half_h)
     if math.hypot(nearest_x - base.x_mm, nearest_y - base.y_mm) < min_radius:
         return False
-    for point in (Point(-350.0, 0.0),):
+    # White-side buffer sits 50 mm outside the left table edge.
+    for point in (Point(-400.0, 0.0),):
         radius = math.hypot(point.x_mm - base.x_mm, point.y_mm - base.y_mm)
         if radius > max_radius:
             return False

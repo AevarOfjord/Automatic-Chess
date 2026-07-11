@@ -39,8 +39,9 @@ class ArmConfig:
     singularity_margin_deg: float = 5.0
     # Folded rest used only while the opposite arm is active. Elbow/wrist at
     # the far end of their 180° windows zigzag the three links outside the
-    # board along the long table edge (with the mirrored base headings).
-    home_shoulder_deg: float = -60.0
+    # board. With base heading 45° / −135°, shoulder −45° puts the fold
+    # exactly parallel to the long table edge (world ±X, y = base y).
+    home_shoulder_deg: float = -45.0
     home_elbow_deg: float = 180.0
     home_wrist_deg: float = 180.0
     fixed_tool_z_mm: float = 0.0
@@ -50,11 +51,14 @@ class ArmConfig:
 
 @dataclass(frozen=True)
 class RobotConfig:
-    board_origin_x_mm: float = 100.0
+    # 14-column grid: W rack | empty gap | chess 8 | empty gap | B rack.
+    # board_origin_x is offset from the table left edge to file-a edge
+    # (2 dead cols + 1 separator = 150 mm).
+    board_origin_x_mm: float = 150.0
     board_origin_y_mm: float = 0.0
     square_size_mm: float = 50.0
     board_squares: int = 8
-    table_columns: int = 12
+    table_columns: int = 14
     table_rows: int = 8
     serial_port: str = "COM3"
     serial_baudrate: int = 115200
@@ -76,7 +80,8 @@ class RobotConfig:
         default_factory=lambda: ArmConfig(
             base_x_mm=0.0,
             base_y_mm=-250.0,
-            forward_angle_deg=60.0,
+            # 45° heading covers the wider 14-column table with 200/160/180 links.
+            forward_angle_deg=45.0,
             link_1_mm=200.0,
             link_2_mm=160.0,
             link_3_mm=180.0,
@@ -91,7 +96,7 @@ class RobotConfig:
         default_factory=lambda: ArmConfig(
             base_x_mm=0.0,
             base_y_mm=250.0,
-            forward_angle_deg=-120.0,
+            forward_angle_deg=-135.0,
             link_1_mm=200.0,
             link_2_mm=160.0,
             link_3_mm=180.0,

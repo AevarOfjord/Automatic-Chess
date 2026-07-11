@@ -4,13 +4,15 @@ Software-first build for two opposing planar 3R chess robots (MG995-class 180° 
 
 Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess) · License: [MIT](LICENSE)
 
-The physical board model is a 12 × 8 magnetic grid (50 mm cells):
+The physical board model is a 14 × 8 magnetic grid (50 mm cells):
 
 | Region | Columns | Labels |
 |--------|---------|--------|
 | White dead rack | **C1–C2** | **W1…W16** (top → bottom) |
-| Chessboard | **C3–C10** | **a1…h8** (files a–h, ranks 1–8 bottom → top) |
-| Black dead rack | **C11–C12** | **B1…B16** (top → bottom) |
+| Empty separator | **C3** | lane between rack and board |
+| Chessboard | **C4–C11** | **a1…h8** (files a–h, ranks 1–8 bottom → top) |
+| Empty separator | **C12** | lane between board and rack |
+| Black dead rack | **C13–C14** | **B1…B16** (top → bottom) |
 
 Table rows are **R1…R8** bottom → top (same direction as chess ranks and +Y mm).
 

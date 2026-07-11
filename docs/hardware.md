@@ -35,10 +35,12 @@ PC  --USB serial JSON-->  ESP32 Gateway  --ESP-NOW-->  WHITE arm ESP32
 | Region | Columns | Cell names |
 |--------|---------|------------|
 | White dead rack | C1–C2 | W1…W16 (W1 at top) |
-| Chess play area | C3–C10 | a1…h8 (a1 near White base / bottom) |
-| Black dead rack | C11–C12 | B1…B16 (B1 at top) |
+| Empty separator | C3 | empty lane |
+| Chess play area | C4–C11 | a1…h8 (a1 near White base / bottom) |
+| Empty separator | C12 | empty lane |
+| Black dead rack | C13–C14 | B1…B16 (B1 at top) |
 
-Rows **R1…R8** run bottom → top (same as chess ranks). Columns **C1…C12** run left → right.
+Rows **R1…R8** run bottom → top (same as chess ranks). Columns **C1…C14** run left → right.
 
 ## PC serial settings
 

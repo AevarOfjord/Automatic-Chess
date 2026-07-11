@@ -31,10 +31,9 @@ class Viewport:
     # Default is a normal window, not a near-desktop-filling size.
     width: int = 1280
     height: int = 800
-    # Y range covers the arm bases at +/-310mm plus room for their labels;
-    # X stays at the table's own extent since base_x is only +/-40mm.
-    world_min_x: float = -390.0
-    world_max_x: float = 390.0
+    # Y range covers the arm bases; X covers the 14-column table (±350) plus buffers.
+    world_min_x: float = -450.0
+    world_max_x: float = 450.0
     world_min_y: float = -410.0
     world_max_y: float = 410.0
     margin: int = 28

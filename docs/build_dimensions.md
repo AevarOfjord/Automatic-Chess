@@ -11,10 +11,10 @@ Source of truth in software: `chess_robot/config.py`, `chess_robot/geometry.py`,
 | Item | Dimension |
 |------|-----------|
 | Cell size | **50 × 50 mm** |
-| Grid | **12 columns × 8 rows** |
-| Full table work surface | **600 × 400 mm** |
-| Table left edge | **x = −300** |
-| Table right edge | **x = +300** |
+| Grid | **14 columns × 8 rows** |
+| Full table work surface | **700 × 400 mm** |
+| Table left edge | **x = −350** |
+| Table right edge | **x = +350** |
 | Table bottom edge (White side) | **y = −200** |
 | Table top edge (Black side) | **y = +200** |
 
@@ -23,8 +23,10 @@ Source of truth in software: `chess_robot/config.py`, `chess_robot/geometry.py`,
 | Columns | Role | Labels |
 |---------|------|--------|
 | **C1–C2** | White dead rack | **W1…W16** |
-| **C3–C10** | Chessboard | **a1…h8** |
-| **C11–C12** | Black dead rack | **B1…B16** |
+| **C3** | Empty separator | (no pieces) |
+| **C4–C11** | Chessboard | **a1…h8** |
+| **C12** | Empty separator | (no pieces) |
+| **C13–C14** | Black dead rack | **B1…B16** |
 
 ### Rows (bottom → top)
 
@@ -50,17 +52,17 @@ Chessboard is **centered in X** on the 600 mm table (100 mm rack each side).
 
 Fill order: **top → bottom**, two columns, left→right in each row.
 
-**White (C1–C2):** W1 at (−275, +175) … W16 at (−225, −175)
+**White (C1–C2):** W1 at (−325, +175) … W16 at (−275, −175)
 
-**Black (C11–C12):** B1 at (+225, +175) … B16 at (+275, −175)
+**Black (C13–C14):** B1 at (+275, +175) … B16 at (+325, −175)
 
 ### Recommended physical build size
 
 | Piece | Size |
 |-------|------|
-| Magnetic play surface | at least **600 × 400 mm** |
+| Magnetic play surface | at least **700 × 400 mm** |
 | Frame / clearance around | leave room for bases **50 mm** outside long edges and arm swing |
-| Overall footprint (rough) | plan ~**700 × 600+ mm** free for bases + folded arms |
+| Overall footprint (rough) | plan ~**800 × 600+ mm** free for bases + folded arms |
 
 ---
 
@@ -77,8 +79,8 @@ Both bases are on the **centerline** of the table in X (x = 0).
 
 | Arm | Base “forward” heading (local 0°) |
 |-----|-----------------------------------|
-| White | **+60°** from world +X |
-| Black | **−120°** from world +X (180° opposite of White) |
+| White | **+45°** from world +X |
+| Black | **−135°** from world +X (180° opposite of White) |
 
 Local 0° = “arm fully straight when J1 = J2 = J3 = 0”.
 
@@ -118,11 +120,9 @@ Software motor windows:
 | Pose | J1 | J2 | J3 |
 |------|----|----|-----|
 | **Fully extended (straight)** | **0°** | **0°** | **0°** |
-| **Folded rest (park)** | **−60°** | **180°** | **180°** |
+| **Folded rest (park)** | **−45°** | **180°** | **180°** |
 
-With White home fold, tool sits near **(220, −250)** — along the base line, outside the table.
-
-Black home fold mirror: about **(−220, +250)**.
+Folded rest is **parallel to the long table edge** (world ±X): White tool near **(220, −250)**, Black near **(−220, +250)**.
 
 Leave ~**5°** software margin inside the hard stops (don’t ride mechanical limits).
 
@@ -146,8 +146,8 @@ Not mandatory as hardware, but IK expects these if used:
 
 | Name | (x, y) mm |
 |------|-----------|
-| White buffer | **(−350, 0)** — 50 mm left of table |
-| Black buffer | **(150, 0)** — on-table software hold point |
+| White buffer | **(−400, 0)** — 50 mm left of table |
+| Black buffer | **(+400, 0)** — 50 mm right of table |
 | Park (logical) | same as base XY; actual folded tool is offset along base line |
 
 ---
@@ -158,30 +158,30 @@ Not mandatory as hardware, but IK expects these if used:
                     Black base (0, +250)
                            ●
                     ← 50 mm →
-  y=+200 ┌──────┬──────────────────┬──────┐
-         │ W    │     a8 … h8      │ B    │
-         │ rack │     (400×400)    │ rack │
-  y=0    │C1-C2 │                  │C11-12│
-         │      │     a1 … h1      │      │
-  y=-200 └──────┴──────────────────┴──────┘
-         x=-300        x=0          x=+300
+  y=+200 ┌────┬─┬──────────────────┬─┬────┐
+         │ W  │ │     a8 … h8      │ │ B  │
+         │rack│g│     (400×400)    │g│rack│
+  y=0    │C1-2│3│     C4 … C11     │12│13-14
+         │    │ │     a1 … h1      │ │    │
+  y=-200 └────┴─┴──────────────────┴─┴────┘
+         x=-350        x=0          x=+350
                     ← 50 mm →
                            ●
                     White base (0, −250)
 ```
 
-White rack left (C1–C2), chess middle (C3–C10), Black rack right (C11–C12).
+White rack **C1–C2**, empty **C3**, chess **C4–C11**, empty **C12**, Black rack **C13–C14**.
 
 ---
 
 ## 8. Build checklist (what to hit exactly)
 
-1. **Grid:** 12×8 cells @ **50 mm**, total **600×400 mm**
-2. **Chess area:** middle 8×8, centers from **(−175, −175)** to **(+175, +175)**
+1. **Grid:** 14×8 cells @ **50 mm**, total **700×400 mm**
+2. **Chess area:** centers from **(−175, −175)** to **(+175, +175)** (still centered)
 3. **Bases:** **(0, ±250)**, rotation axes vertical
 4. **Links:** **200 / 160 / 180 mm** axis-to-axis
-5. **Servo zero:** **0 / 0 / 0** = fully straight along **+60°** (White) / **−120°** (Black)
-6. **Fold:** **−60 / 180 / 180** clears the board along the base line
+5. **Servo zero:** **0 / 0 / 0** = fully straight along **+45°** (White) / **−135°** (Black)
+6. **Fold:** **−45 / 180 / 180** — parallel to the long table edge, outside the board
 7. **Pucks ~30 mm** diameter, steel insert; weak cell magnets at centers
 8. **Keep arms planar**; one fixed working height for the magnet face
 
