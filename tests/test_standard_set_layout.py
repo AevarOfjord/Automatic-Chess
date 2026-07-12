@@ -39,58 +39,54 @@ class StandardSetLayoutTests(unittest.TestCase):
             50.0,
         )
 
-    def test_chessboard_is_centered_inside_fourteen_by_eight_table_grid(self) -> None:
+    def test_table_has_twenty_mm_separators_and_centered_board(self) -> None:
         config = RobotConfig()
         layout = BoardLayout(config)
 
-        self.assertEqual(config.table_columns, 14)
+        self.assertEqual(config.separator_width_mm, 20.0)
+        self.assertEqual(config.table_columns, 12)  # piece cells only
         self.assertEqual(config.table_rows, 8)
-        self.assertEqual(config.table_width_mm, 700.0)
+        self.assertEqual(config.table_width_mm, 640.0)
         self.assertEqual(config.table_height_mm, 400.0)
-        # World (0, 0) is the table's center, so the table spans ±350 x / ±200 y.
-        self.assertEqual(config.table_origin_x_mm, -350.0)
+        self.assertEqual(config.table_origin_x_mm, -320.0)
         self.assertEqual(config.table_origin_y_mm, -200.0)
-        # Chess area stays centered; dead racks sit one column farther out.
+        self.assertEqual(config.board_origin_x_mm, 120.0)  # 100 rack + 20 gap
+        # Chess stays centered; dead racks sit outside the 20 mm gaps.
         self.assertEqual(layout.square("a1").x_mm, -175.0)
         self.assertEqual(layout.square("h8").x_mm, 175.0)
-        self.assertEqual(layout.dead_slot(ArmId.WHITE, 0).x_mm, -325.0)
-        self.assertEqual(layout.dead_slot(ArmId.WHITE, 1).x_mm, -275.0)
-        self.assertEqual(layout.dead_slot(ArmId.BLACK, 0).x_mm, 275.0)
-        self.assertEqual(layout.dead_slot(ArmId.BLACK, 15).x_mm, 325.0)
-
-    def test_empty_separator_columns_between_racks_and_board(self) -> None:
-        layout = BoardLayout(RobotConfig())
-        # C3 (col 2) and C12 (col 11) are empty lanes, not chess and not dead.
-        self.assertIsNone(layout.chess_square_name(2, 0))
-        self.assertIsNone(layout.chess_square_name(11, 4))
-        self.assertIsNone(layout.dead_slot_at_cell(2, 0))
-        self.assertIsNone(layout.dead_slot_at_cell(11, 7))
-        self.assertEqual(layout.cell_label(2, 0), "C3R1")
-        self.assertEqual(layout.cell_label(11, 7), "C12R8")
+        self.assertEqual(layout.dead_slot(ArmId.WHITE, 0).x_mm, -295.0)
+        self.assertEqual(layout.dead_slot(ArmId.WHITE, 1).x_mm, -245.0)
+        self.assertEqual(layout.dead_slot(ArmId.BLACK, 0).x_mm, 245.0)
+        self.assertEqual(layout.dead_slot(ArmId.BLACK, 15).x_mm, 295.0)
+        self.assertAlmostEqual(layout.separator_center_x(left=True), -210.0)
+        self.assertAlmostEqual(layout.separator_center_x(left=False), 210.0)
+        board_left = config.table_origin_x_mm + config.board_origin_x_mm
+        white_rack_right = config.table_origin_x_mm + config.dead_rack_columns * config.square_size_mm
+        self.assertAlmostEqual(board_left - white_rack_right, 20.0)
 
     def test_grid_cell_names_use_chess_and_rack_labels(self) -> None:
         layout = BoardLayout(RobotConfig())
 
-        # Axes: C1…C14 left→right, R1…R8 bottom→top (same sense as chess ranks).
+        # Piece columns C1…C12 (20 mm separators are not piece columns).
         self.assertEqual(layout.column_label(0), "C1")
-        self.assertEqual(layout.column_label(13), "C14")
+        self.assertEqual(layout.column_label(11), "C12")
         self.assertEqual(layout.row_label(0), "R1")
         self.assertEqual(layout.row_label(7), "R8")
 
-        # Play area sits on C4–C11; bottom-left chess square is a1.
-        self.assertEqual(layout.chess_start_col, 3)
-        self.assertEqual(layout.cell_label(3, 0), "a1")
-        self.assertEqual(layout.cell_label(10, 7), "h8")
-        self.assertEqual(layout.cell_label(6, 3), "d4")
+        # Play area is piece columns C3–C10 = a…h.
+        self.assertEqual(layout.chess_start_col, 2)
+        self.assertEqual(layout.cell_label(2, 0), "a1")
+        self.assertEqual(layout.cell_label(9, 7), "h8")
+        self.assertEqual(layout.cell_label(5, 3), "d4")
 
-        # Dead racks: W1 at top of white columns C1–C2; B1 at top of C13–C14.
-        self.assertEqual(layout.cell_label(0, 7), "W1")  # C1, R8
-        self.assertEqual(layout.cell_label(1, 7), "W2")  # C2, R8
+        # Dead racks: W on C1–C2; B on C11–C12.
+        self.assertEqual(layout.cell_label(0, 7), "W1")
+        self.assertEqual(layout.cell_label(1, 7), "W2")
         self.assertEqual(layout.cell_label(0, 6), "W3")
-        self.assertEqual(layout.cell_label(12, 7), "B1")
-        self.assertEqual(layout.cell_label(13, 0), "B16")
+        self.assertEqual(layout.cell_label(10, 7), "B1")
+        self.assertEqual(layout.cell_label(11, 0), "B16")
         self.assertEqual(layout.dead_slot_at_cell(0, 7), (ArmId.WHITE, 0))
-        self.assertIsNone(layout.dead_slot_at_cell(3, 0))
+        self.assertIsNone(layout.dead_slot_at_cell(2, 0))
 
     def test_capture_goes_to_capturing_arm_dead_line(self) -> None:
         board = chess.Board()

@@ -101,7 +101,7 @@ class VisualChessRobotSimulator:
                 tool=tool,
                 pose=pose,
                 z_mm=cfg.fixed_tool_z_mm,
-                target_label="folded home",
+                target_label="outside rest",
             )
 
     def close(self) -> None:
@@ -472,13 +472,13 @@ class VisualChessRobotSimulator:
         virtual_tools = {arm_id: arm.tool for arm_id, arm in self.arms.items()}
         physical_state = self.inventory.clone()
         for index, transfer in enumerate(plan.transfers):
-            # Keep-out: opposite arm returns to its folded home before this arm works.
+            # Keep-out: opposite arm returns to outside rest before this arm works.
             opposite = transfer.arm.opposite
             park = self.layout.park(opposite)
             if self._distance(virtual_tools[opposite], park) > 1.0:
                 fixed_z = self.config.arm(opposite).fixed_tool_z_mm
                 plan_queue.append(
-                    self._home_motion(opposite, "keep-out folded home", virtual_tools[opposite], park, fixed_z)
+                    self._home_motion(opposite, "keep-out outside rest", virtual_tools[opposite], park, fixed_z)
                 )
                 virtual_tools[opposite] = park
             if precomputed_paths is not None:
@@ -578,7 +578,7 @@ class VisualChessRobotSimulator:
             fixed_z = self.config.arm(arm_id).fixed_tool_z_mm
             start = virtual_tools[arm_id]
             if self._distance(start, park) > 1.0:
-                steps.append(self._home_motion(arm_id, "folded home", start, park, fixed_z))
+                steps.append(self._home_motion(arm_id, "outside rest", start, park, fixed_z))
         return steps
 
     def _home_motion(

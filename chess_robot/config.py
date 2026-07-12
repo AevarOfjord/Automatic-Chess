@@ -37,28 +37,28 @@ class ArmConfig:
     # 180° window so commanded targets never ride the mechanical limit.
     joint_limit_margin_deg: float = 5.0
     singularity_margin_deg: float = 5.0
-    # Folded rest used only while the opposite arm is active. Elbow/wrist at
-    # the far end of their 180° windows zigzag the three links outside the
-    # board. With base heading 45° / −135°, shoulder −45° puts the fold
-    # exactly parallel to the long table edge (world ±X, y = base y).
+    # Outside L-rest while the opposite arm works the table.
+    # Shoulder −45° + elbow 0°: L1+L2 collinear along the long exterior edge
+    # (world ±X at y = base). Wrist 90° bends L3 around the short exterior
+    # side so the chain stays off the table and the two arms do not cross.
+    # White occupies bottom+right exterior; Black occupies top+left exterior.
     home_shoulder_deg: float = -45.0
-    home_elbow_deg: float = 180.0
-    home_wrist_deg: float = 180.0
+    home_elbow_deg: float = 0.0
+    home_wrist_deg: float = 90.0
     fixed_tool_z_mm: float = 0.0
-    park_x_mm: float = 200.0
-    park_y_mm: float = -30.0
+    park_x_mm: float = 360.0
+    park_y_mm: float = -70.0
 
 
 @dataclass(frozen=True)
 class RobotConfig:
-    # 14-column grid: W rack | empty gap | chess 8 | empty gap | B rack.
-    # board_origin_x is offset from the table left edge to file-a edge
-    # (2 dead cols + 1 separator = 150 mm).
-    board_origin_x_mm: float = 150.0
+    # Layout: [dead rack][20 mm gap][chess 8×50][20 mm gap][dead rack].
+    # Piece cells are still 50 mm; separators are thinner empty lanes, not cells.
     board_origin_y_mm: float = 0.0
     square_size_mm: float = 50.0
     board_squares: int = 8
-    table_columns: int = 14
+    dead_rack_columns: int = 2
+    separator_width_mm: float = 20.0
     table_rows: int = 8
     serial_port: str = "COM3"
     serial_baudrate: int = 115200
@@ -74,13 +74,13 @@ class RobotConfig:
     # Certified mirrored 3-link geometry for MG995 180° servos. Base centers
     # sit 50 mm beyond the table edge. Unequal links (200 / 160 / 180 mm)
     # cover every usable grid center and adjacent-grid route with >=5° of
-    # operational reserve; the folded home pose is used only while waiting
-    # for the opposite arm.
+    # operational reserve; L-home parks both proximal links outside the table.
     white_arm: ArmConfig = field(
         default_factory=lambda: ArmConfig(
             base_x_mm=0.0,
-            base_y_mm=-250.0,
-            # 45° heading covers the wider 14-column table with 200/160/180 links.
+            # 55 mm outside the first grid row edge (table y = −200).
+            base_y_mm=-255.0,
+            # 45° heading covers the table with 200/160/180 links.
             forward_angle_deg=45.0,
             link_1_mm=200.0,
             link_2_mm=160.0,
@@ -88,14 +88,16 @@ class RobotConfig:
             shoulder_limits_deg=(-90.0, 90.0),
             elbow_limits_deg=(0.0, 180.0),
             wrist_limits_deg=(0.0, 180.0),
-            park_x_mm=0.0,
-            park_y_mm=-250.0,
+            # Home tool on right exterior after outside bend (−45/0/90).
+            park_x_mm=360.0,
+            park_y_mm=-75.0,
         )
     )
     black_arm: ArmConfig = field(
         default_factory=lambda: ArmConfig(
             base_x_mm=0.0,
-            base_y_mm=250.0,
+            # 55 mm outside the first grid row edge (table y = +200).
+            base_y_mm=255.0,
             forward_angle_deg=-135.0,
             link_1_mm=200.0,
             link_2_mm=160.0,
@@ -103,8 +105,9 @@ class RobotConfig:
             shoulder_limits_deg=(-90.0, 90.0),
             elbow_limits_deg=(0.0, 180.0),
             wrist_limits_deg=(0.0, 180.0),
-            park_x_mm=0.0,
-            park_y_mm=250.0,
+            # Home tool on left exterior after outside bend (−45/0/90).
+            park_x_mm=-360.0,
+            park_y_mm=75.0,
         )
     )
 
@@ -113,8 +116,22 @@ class RobotConfig:
         return self.square_size_mm * self.board_squares
 
     @property
+    def table_columns(self) -> int:
+        """Count of 50 mm piece cells only (racks + chess), not the thin separators."""
+        return 2 * self.dead_rack_columns + self.board_squares
+
+    @property
+    def board_origin_x_mm(self) -> float:
+        """Offset from table left edge to the left edge of file a."""
+        return self.dead_rack_columns * self.square_size_mm + self.separator_width_mm
+
+    @property
     def table_width_mm(self) -> float:
-        return self.square_size_mm * self.table_columns
+        return (
+            2 * self.dead_rack_columns * self.square_size_mm
+            + 2 * self.separator_width_mm
+            + self.board_size_mm
+        )
 
     @property
     def table_height_mm(self) -> float:
@@ -122,13 +139,34 @@ class RobotConfig:
 
     @property
     def table_origin_x_mm(self) -> float:
-        """World x of the table's left edge (column C1) — table is x-centered on 0."""
+        """World x of the table's left edge — table is x-centered on 0."""
         return -self.table_width_mm / 2.0
 
     @property
     def table_origin_y_mm(self) -> float:
         """World y of the table's bottom edge (row R1) — table is y-centered on 0."""
         return -self.table_height_mm / 2.0
+
+    def column_left_x_mm(self, table_col: int) -> float:
+        """World x of the left edge of a 50 mm piece cell (0-based index)."""
+        if not 0 <= table_col < self.table_columns:
+            raise ValueError(f"table column out of range: {table_col}")
+        size = self.square_size_mm
+        ox = self.table_origin_x_mm
+        rack = self.dead_rack_columns
+        sep = self.separator_width_mm
+        if table_col < rack:
+            return ox + table_col * size
+        if table_col < rack + self.board_squares:
+            return ox + rack * size + sep + (table_col - rack) * size
+        return (
+            ox
+            + rack * size
+            + sep
+            + self.board_size_mm
+            + sep
+            + (table_col - rack - self.board_squares) * size
+        )
 
     def arm(self, arm_id: ArmId) -> ArmConfig:
         return self.white_arm if arm_id is ArmId.WHITE else self.black_arm

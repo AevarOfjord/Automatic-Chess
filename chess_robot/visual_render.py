@@ -270,14 +270,28 @@ class PygameRenderer:
     def _draw_board(self) -> None:
         pygame = self.pygame
         layout = self.sim.layout
+        cfg = self.sim.config
         colors = ((245, 232, 205), (125, 158, 118))
-        size = self.sim.config.square_size_mm
-        ox, oy = self.sim.config.table_origin_x_mm, self.sim.config.table_origin_y_mm
+        size = cfg.square_size_mm
+        ox, oy = cfg.table_origin_x_mm, cfg.table_origin_y_mm
         chess_start_col = layout.chess_start_col
         chess_end_col = layout.chess_end_col
-        for row_from_bottom in range(self.sim.config.table_rows):
-            for table_col in range(self.sim.config.table_columns):
-                world = Point(ox + table_col * size, oy + row_from_bottom * size)
+        # Thin empty separators between racks and the live board.
+        for left_sep in (True, False):
+            if left_sep:
+                gap_x0 = ox + cfg.dead_rack_columns * size
+            else:
+                gap_x0 = ox + cfg.board_origin_x_mm + cfg.board_size_mm
+            gap = self._rect_from_world(
+                Point(gap_x0, oy),
+                Point(gap_x0 + cfg.separator_width_mm, oy + cfg.table_height_mm),
+            )
+            pygame.draw.rect(self.screen, (210, 216, 226), gap)
+            pygame.draw.rect(self.screen, (170, 178, 192), gap, width=1)
+        for row_from_bottom in range(cfg.table_rows):
+            for table_col in range(cfg.table_columns):
+                left = cfg.column_left_x_mm(table_col)
+                world = Point(left, oy + row_from_bottom * size)
                 rect = self._rect_from_world(world, Point(world.x_mm + size, world.y_mm + size))
                 cell_name = layout.cell_label(table_col, row_from_bottom)
                 if chess_start_col <= table_col < chess_end_col:
@@ -286,10 +300,11 @@ class PygameRenderer:
                 else:
                     pygame.draw.rect(self.screen, (220, 224, 232), rect)
                     pygame.draw.rect(self.screen, (190, 196, 208), rect, width=1)
+                center = layout.cell_center(table_col, row_from_bottom)
                 pygame.draw.circle(
                     self.screen,
                     (160, 168, 180),
-                    self.viewport.screen(Point(world.x_mm + size / 2, world.y_mm + size / 2)),
+                    self.viewport.screen(center),
                     self.viewport.length(3),
                 )
                 if self.sim.options.show_cell_labels:
@@ -300,45 +315,36 @@ class PygameRenderer:
                     )
                     self._tiny(
                         cell_name,
-                        Point(world.x_mm + size / 2, world.y_mm + size - 10),
+                        Point(center.x_mm, world.y_mm + size - 10),
                         label_color,
                     )
         table_outline = self._rect_from_world(
             Point(ox, oy),
-            Point(ox + self.sim.config.table_width_mm, oy + self.sim.config.table_height_mm),
+            Point(ox + cfg.table_width_mm, oy + cfg.table_height_mm),
         )
         chess_outline = self._rect_from_world(
-            Point(ox + self.sim.config.board_origin_x_mm, oy + self.sim.config.board_origin_y_mm),
+            Point(ox + cfg.board_origin_x_mm, oy + cfg.board_origin_y_mm),
             Point(
-                ox + self.sim.config.board_origin_x_mm + self.sim.config.board_size_mm,
-                oy + self.sim.config.board_origin_y_mm + self.sim.config.board_size_mm,
+                ox + cfg.board_origin_x_mm + cfg.board_size_mm,
+                oy + cfg.board_origin_y_mm + cfg.board_size_mm,
             ),
         )
         pygame.draw.rect(self.screen, (60, 68, 82), table_outline, width=3)
         pygame.draw.rect(self.screen, (40, 48, 60), chess_outline, width=3)
-        # Axis legends: C1…C12 left→right, R1…R8 bottom→top (matches chess ranks).
-        for table_col in range(self.sim.config.table_columns):
-            self._tiny(
-                layout.column_label(table_col),
-                Point(ox + (table_col + 0.5) * size, oy - 16),
-                (70, 80, 95),
-            )
-        for row_from_bottom in range(self.sim.config.table_rows):
-            y = oy + (row_from_bottom + 0.5) * size
-            self._tiny(layout.row_label(row_from_bottom), Point(ox - 22, y), (70, 80, 95))
-        # Chess file/rank strip along the play area for quick orientation.
+        # Chess file/rank marks only (no C# / R# table axis labels).
         for table_col in range(chess_start_col, chess_end_col):
             file_letter = chr(ord("a") + (table_col - chess_start_col))
+            cx = layout.cell_center(table_col, 0).x_mm
             self._tiny(
                 file_letter,
-                Point(ox + (table_col + 0.5) * size, oy + self.sim.config.table_height_mm + 16),
+                Point(cx, oy + cfg.table_height_mm + 16),
                 (80, 90, 110),
             )
-        for row_from_bottom in range(self.sim.config.board_squares):
+        for row_from_bottom in range(cfg.board_squares):
             self._tiny(
                 str(row_from_bottom + 1),
                 Point(
-                    ox + self.sim.config.board_origin_x_mm + self.sim.config.board_size_mm + 14,
+                    ox + cfg.board_origin_x_mm + cfg.board_size_mm + 14,
                     oy + (row_from_bottom + 0.5) * size,
                 ),
                 (80, 90, 110),

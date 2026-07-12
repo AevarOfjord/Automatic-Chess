@@ -4,15 +4,15 @@ Software-first build for two opposing planar 3R chess robots (MG995-class 180° 
 
 Repository: [AevarOfjord/Automatic-Chess](https://github.com/AevarOfjord/Automatic-Chess) · License: [MIT](LICENSE)
 
-The physical board model is a 14 × 8 magnetic grid (50 mm cells):
+The physical board model is **640 × 400 mm**: 50 mm piece cells plus **20 mm** empty gaps between racks and the board.
 
-| Region | Columns | Labels |
-|--------|---------|--------|
-| White dead rack | **C1–C2** | **W1…W16** (top → bottom) |
-| Empty separator | **C3** | lane between rack and board |
-| Chessboard | **C4–C11** | **a1…h8** (files a–h, ranks 1–8 bottom → top) |
-| Empty separator | **C12** | lane between board and rack |
-| Black dead rack | **C13–C14** | **B1…B16** (top → bottom) |
+| Region | Piece columns | Labels / size |
+|--------|---------------|---------------|
+| White dead rack | **C1–C2** | **W1…W16** (top → bottom), 50 mm cells |
+| Empty separator | — | **20 mm** gap |
+| Chessboard | **C3–C10** | **a1…h8**, 50 mm cells |
+| Empty separator | — | **20 mm** gap |
+| Black dead rack | **C11–C12** | **B1…B16**, 50 mm cells |
 
 Table rows are **R1…R8** bottom → top (same direction as chess ranks and +Y mm).
 
@@ -114,7 +114,7 @@ Captured pieces are placed deterministically, never randomly.
 ```
 
 `optimize-geometry` searches the mirrored 3R design space (unequal link lengths, 180° joint
-windows, 50 mm base setback) and writes `runtime_data/geometry_optimization.json`. Default
+windows, 55 mm base setback) and writes `runtime_data/geometry_optimization.json`. Default
 geometry is **200 / 160 / 180 mm** links. Certification covers the operational grid and each
 horizontal, vertical, and diagonal neighboring-grid route.
 

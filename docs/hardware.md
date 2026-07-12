@@ -28,19 +28,19 @@ PC  --USB serial JSON-->  ESP32 Gateway  --ESP-NOW-->  WHITE arm ESP32
 3. Confirm stepper pins, home switches, e-stop, magnet driver, and pickup sensor match the sketch.
 4. Calibrate `J1_STEPS_PER_DEG` / `J2_STEPS_PER_DEG` / `J3_STEPS_PER_DEG` for your gearing and microstepping (or PWM mapping for MG995 servos).
 5. Park poses and base positions in `chess_robot/config.py` must match the physical table (600×400 mm grid, 50 mm cells).
-6. Default arm geometry is a **planar 3R** with unequal links **200 / 160 / 180 mm**, bases **50 mm** off the long table edges, and **180°** joint windows per MG995-class servo.
+6. Default arm geometry is a **planar 3R** with unequal links **200 / 160 / 180 mm**, bases **55 mm** off the outer edge of the first grid row, and **180°** joint windows per MG995-class servo.
 
 ### Grid labels (mark these on the table)
 
 | Region | Columns | Cell names |
 |--------|---------|------------|
-| White dead rack | C1–C2 | W1…W16 (W1 at top) |
-| Empty separator | C3 | empty lane |
-| Chess play area | C4–C11 | a1…h8 (a1 near White base / bottom) |
-| Empty separator | C12 | empty lane |
-| Black dead rack | C13–C14 | B1…B16 (B1 at top) |
+| White dead rack | C1–C2 | W1…W16 (W1 at top), 50 mm cells |
+| Empty separator | — | **20 mm** gap (not a piece column) |
+| Chess play area | C3–C10 | a1…h8 (a1 near White base / bottom) |
+| Empty separator | — | **20 mm** gap |
+| Black dead rack | C11–C12 | B1…B16 (B1 at top), 50 mm cells |
 
-Rows **R1…R8** run bottom → top (same as chess ranks). Columns **C1…C14** run left → right.
+Rows **R1…R8** run bottom → top (same as chess ranks). Piece columns **C1…C12** run left → right among 50 mm cells only.
 
 ## PC serial settings
 
@@ -59,7 +59,8 @@ Default in `RobotConfig`:
 - Electromagnet on at source center → planar XY path → magnet off at destination.
 - Weak board-cell magnets help snap steel-insert pucks to cell centers after release.
 - **Keep-out policy:** only one arm works the table at a time; the opposite arm is parked first
-  in a folded rest pose outside the board.
+  in an outside L-rest (L1+L2 straight along the long exterior, L3 bent around the short exterior)
+  so the arms do not occupy the board or cross each other.
 
 ## Camera
 

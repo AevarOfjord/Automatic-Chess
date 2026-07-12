@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from .config import ArmConfig, ArmId, RobotConfig
-from .geometry import BoardLayout, Point, ScaraKinematics
+from .geometry import BoardLayout, Point, ScaraKinematics  # BoardLayout used in route centers
 
 
 # MG995-class servos: one continuous 180° travel window per joint.
@@ -113,10 +113,10 @@ def _required_off_table_points(config: RobotConfig, arm: ArmId) -> list[tuple[st
 
 
 def _route_segments(config: RobotConfig) -> list[tuple[Point, Point]]:
-    """All horizontal, vertical, and diagonal neighboring cell-center paths."""
-    x0, y0, size = config.table_origin_x_mm, config.table_origin_y_mm, config.square_size_mm
+    """All horizontal, vertical, and diagonal neighboring piece-cell paths."""
+    layout = BoardLayout(config)
     centers = {
-        (col, row): Point(x0 + (col + 0.5) * size, y0 + (row + 0.5) * size)
+        (col, row): layout.cell_center(col, row)
         for col in range(config.table_columns)
         for row in range(config.table_rows)
     }
@@ -207,8 +207,8 @@ def _shape_precheck(link_1: float, link_2: float, link_3: float, base_x: float, 
     max_radius = link_1 + link_2 + link_3 - 5.0
     min_radius = 20.0
     base = Point(-base_x, -setback)
-    # Envelope of outermost cell centers on the default 14×8 table (50 mm cells).
-    half_w = 325.0  # ± (700/2 - 25)
+    # Envelope of outermost piece-cell centers on the default table (~640 mm wide).
+    half_w = 295.0  # ± (640/2 - 25)
     half_h = 175.0  # ± (400/2 - 25)
     corners = [Point(x, y) for x in (-half_w, half_w) for y in (-half_h, half_h)]
     if max(math.hypot(point.x_mm - base.x_mm, point.y_mm - base.y_mm) for point in corners) > max_radius:
@@ -238,7 +238,7 @@ def _shape_candidates() -> list[tuple[float, float, float, float, float, float]]
                 if total < 520 or total > 600:
                     continue
                 for base_x in (0,):
-                    for setback in (250,):
+                    for setback in (255,):
                         for heading in (45, 60, 75, 90):
                             if _shape_precheck(link_1, link_2, link_3, base_x, setback):
                                 shapes.append(
@@ -321,11 +321,11 @@ def optimize_geometry(*, coarse_grid_mm: int = 50, final_grid_mm: int = 5) -> Op
     # designs are re-checked at the final grid before return.
     # Seed the known good unequal MG995 candidate early.
     preferred = [
-        (200.0, 160.0, 180.0, 0.0, 250.0, 60.0),
-        (190.0, 170.0, 180.0, 0.0, 250.0, 60.0),
-        (200.0, 170.0, 170.0, 0.0, 250.0, 60.0),
-        (200.0, 180.0, 160.0, 0.0, 250.0, 60.0),
-        (180.0, 180.0, 180.0, 0.0, 250.0, 60.0),
+        (200.0, 160.0, 180.0, 0.0, 255.0, 45.0),
+        (190.0, 170.0, 180.0, 0.0, 255.0, 45.0),
+        (200.0, 170.0, 170.0, 0.0, 255.0, 45.0),
+        (200.0, 180.0, 160.0, 0.0, 255.0, 45.0),
+        (180.0, 180.0, 180.0, 0.0, 255.0, 45.0),
     ]
     seen: set[tuple[float, float, float, float, float, float]] = set()
     ordered: list[tuple[float, float, float, float, float, float]] = []

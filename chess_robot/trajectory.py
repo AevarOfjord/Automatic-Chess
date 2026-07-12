@@ -161,21 +161,39 @@ class PuckTrajectoryPlanner:
         min_y = oy + self.puck.puck_radius_mm
         max_y = oy + self.config.table_height_mm - self.puck.puck_radius_mm
 
+        # Piece-cell centers (accounts for thin separators between racks and board).
         for col in range(self.config.table_columns):
             for row in range(self.config.table_rows):
-                point = Point(ox + (col + 0.5) * step, oy + (row + 0.5) * step)
+                point = self.layout.cell_center(col, row)
                 if self.point_clear(point, obstacles):
                     points.append(point)
 
-        for col in range(1, self.config.table_columns):
-            for row in range(1, self.config.table_rows):
-                point = Point(ox + col * step, oy + row * step)
-                if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
-                    if self.point_clear(point, obstacles):
-                        points.append(point)
+        # Corners of piece cells (shared edges within a region).
+        for col in range(self.config.table_columns):
+            left = self.config.column_left_x_mm(col)
+            for row in range(self.config.table_rows):
+                bottom = oy + row * step
+                for x, y in (
+                    (left, bottom),
+                    (left + step, bottom),
+                    (left, bottom + step),
+                    (left + step, bottom + step),
+                ):
+                    point = Point(x, y)
+                    if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
+                        if self.point_clear(point, obstacles):
+                            points.append(point)
+
+        # Midlines of the empty separator lanes (corridor waypoints).
+        for left_sep in (True, False):
+            x = self.layout.separator_center_x(left=left_sep)
+            for row in range(self.config.table_rows):
+                point = Point(x, oy + (row + 0.5) * step)
+                if self.point_clear(point, obstacles):
+                    points.append(point)
 
         for col in range(self.config.table_columns):
-            x = ox + (col + 0.5) * step
+            x = self.layout.cell_center(col, 0).x_mm
             for y in (min_y, max_y):
                 point = Point(x, y)
                 if self.point_clear(point, obstacles):
@@ -191,19 +209,6 @@ class PuckTrajectoryPlanner:
             for point in (self.layout.park(arm), self.layout.buffer(arm)):
                 if self.point_clear(point, obstacles):
                     points.append(point)
-
-        for col in range(self.config.table_columns * 2 + 1):
-            for row in (0, self.config.table_rows * 2):
-                point = Point(ox + col * step / 2.0, oy + row * step / 2.0)
-                if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
-                    if self.point_clear(point, obstacles):
-                        points.append(point)
-        for row in range(self.config.table_rows * 2 + 1):
-            for col in (0, self.config.table_columns * 2):
-                point = Point(ox + col * step / 2.0, oy + row * step / 2.0)
-                if min_x <= point.x_mm <= max_x and min_y <= point.y_mm <= max_y:
-                    if self.point_clear(point, obstacles):
-                        points.append(point)
 
         return self._dedupe(points)
 
