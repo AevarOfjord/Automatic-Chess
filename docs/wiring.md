@@ -100,55 +100,46 @@ Flash `firmware/esp32_arm_receiver.ino` twice:
 1. `#define ARM_ID "WHITE"` + set `GATEWAY_MAC[]`
 2. `#define ARM_ID "BLACK"` + same `GATEWAY_MAC[]`
 
-### GPIO table (default sketch)
+### GPIO table (default sketch — MG995 PWM servos)
+
+Absolute-position servos: **one PWM signal per joint, no DIR / ENABLE / home switches.**
 
 | Signal | GPIO | Direction | Connects to |
 |--------|------|-----------|-------------|
-| **J1 STEP / PWM** | **12** | OUT | Shoulder driver STEP or servo signal* |
-| **J1 DIR** | **14** | OUT | Shoulder DIR (if step/dir driver) |
-| **J2 STEP / PWM** | **27** | OUT | Elbow driver STEP or servo signal* |
-| **J2 DIR** | **26** | OUT | Elbow DIR |
-| **J3 STEP / PWM** | **25** | OUT | Wrist driver STEP or servo signal* |
-| **J3 DIR** | **33** | OUT | Wrist DIR |
-| **ENABLE** | **13** | OUT | Driver enable (active per driver datasheet) |
-| **J1 HOME** | **32** | IN pull-up | Shoulder home switch → GND when hit |
-| **J2 HOME** | **35** | IN pull-up | Elbow home switch → GND when hit |
-| **J3 HOME** | **34** | IN pull-up | Wrist home switch → GND when hit |
-| **E-STOP** | **39** | IN pull-up | E-stop NC → GND when pressed (fault) |
-| **PICKUP sensor** | **36** | IN pull-up | Sensor → GND when piece detected |
+| **J1 signal** | **13** | OUT (PWM) | Shoulder MG995 signal |
+| **J2 signal** | **25** | OUT (PWM) | Elbow MG995 signal |
+| **J3 signal** | **26** | OUT (PWM) | Wrist MG995 signal |
+| **E-STOP** | **32** | IN pull-up | E-stop NC → GND when pressed (fault) |
+| **PICKUP sensor** | **33** | IN pull-up | Sensor → GND when piece detected |
 | **MAGNET** | **23** | OUT | Magnet driver input (HIGH = on) |
-| **GND** | GND | — | Common with drivers, supplies, switches |
+| **GND** | GND | — | Common with servos, supplies, switches |
 | **3V3 / 5V** | — | — | Logic only; not servo power |
 
-\*Firmware currently uses **FastAccelStepper** (step/dir style). For true MG995 PWM you either:
-
-- use a small step/dir → servo bridge, or  
-- retarget the sketch to `Servo` / LEDC PWM on the STEP pins and leave DIR unused.
+The firmware maps each logical joint angle to a servo pulse width via the
+`jointCal` table (`midUs` / `usPerDeg` / `dir`); tune those per servo so the
+commanded angle matches the true mechanical angle.
 
 ### Per-joint wiring (one joint shown; repeat for J1/J2/J3)
 
 ```
-                    ┌─────────────┐
-   ESP32 GPIO STEP ─┤ STEP / SIG  │
-   ESP32 GPIO DIR  ─┤ DIR         │──► joint actuator (servo or stepper)
-   ESP32 GPIO EN   ─┤ ENABLE      │
-   ESP32 GND      ─┤ GND         │
-                    └──────┬──────┘
-                           │
-   Servo/driver PSU 5–6 V ─┴── motor power (not from ESP32)
+   ESP32 GPIO (13 / 25 / 26) ──► MG995 signal (orange)
+                    servo 5–6 V PSU (+) ──► MG995 V+ (red)
+                    common GND        ──► MG995 GND (brown)
+
+   ★ Servo power comes from the PSU, never the ESP32 5V pin.
+   ★ Tie servo-PSU GND to ESP32 GND so the PWM signal shares a reference.
 ```
 
-### Home / e-stop / pickup (active low to GND)
+### E-stop / pickup (active low to GND)
 
 ```
-   ESP32 GPIO (HOME / ESTOP / PICKUP)
+   ESP32 GPIO (ESTOP 32 / PICKUP 33)
         │
         ├── internal INPUT_PULLUP
         │
         └── switch/sensor ──► GND   (closed = LOW = asserted)
 
    Sketch logic:
-     HOME  : LOW while switch pressed during homing
      ESTOP : LOW → enter FAULT ("emergency stop")
      PICKUP: LOW → telemetry pickup=true after magnet settle
 ```
@@ -183,24 +174,17 @@ Flash `firmware/esp32_arm_receiver.ino` twice:
                     │                                      │
    Gateway ESP-NOW  │  Wi-Fi antenna                       │
                     │                                      │
-         12 ────────┼─► J1 STEP/SIG ──► Shoulder MG995*    │
-         14 ────────┼─► J1 DIR                             │
-         27 ────────┼─► J2 STEP/SIG ──► Elbow MG995*       │
-         26 ────────┼─► J2 DIR                             │
-         25 ────────┼─► J3 STEP/SIG ──► Wrist MG995*       │
-         33 ────────┼─► J3 DIR                             │
-         13 ────────┼─► ENABLE (all drivers if shared)     │
+         13 ────────┼─► J1 signal ──► Shoulder MG995       │
+         25 ────────┼─► J2 signal ──► Elbow MG995          │
+         26 ────────┼─► J3 signal ──► Wrist MG995          │
                     │                                      │
-         32 ────────┼─► J1 home switch                     │
-         35 ────────┼─► J2 home switch                     │
-         34 ────────┼─► J3 home switch                     │
-         39 ────────┼─► E-stop                             │
-         36 ────────┼─► Pickup sensor                      │
+         32 ────────┼─► E-stop                             │
+         33 ────────┼─► Pickup sensor                      │
          23 ────────┼─► Magnet driver                      │
-        GND ────────┼─► common ground                      │
+        GND ────────┼─► common ground (servos + logic)     │
                     └──────────────────────────────────────┘
 
-   * or step/dir driver → geared motor; see §4.
+   Servo V+ (red) goes to the 5–6 V servo PSU, not the ESP32.
 ```
 
 Duplicate this block for the second arm with its own ESP32, MAC, and `ARM_ID`.
@@ -223,13 +207,11 @@ Print MACs once with a small Wi‑Fi sketch (`WiFi.macAddress()`) and paste real
 
 | Function | White arm ESP32 | Black arm ESP32 |
 |----------|-----------------|-----------------|
-| Shoulder | GPIO 12 / 14 | same pin numbers on second board |
-| Elbow | GPIO 27 / 26 | same |
-| Wrist | GPIO 25 / 33 | same |
-| Enable | GPIO 13 | same |
-| Homes | GPIO 32, 35, 34 | same |
-| E-stop | GPIO 39 | same (or shared loop if desired) |
-| Pickup | GPIO 36 | same |
+| Shoulder signal | GPIO 13 | same pin numbers on second board |
+| Elbow signal | GPIO 25 | same |
+| Wrist signal | GPIO 26 | same |
+| E-stop | GPIO 32 | same (or shared loop if desired) |
+| Pickup | GPIO 33 | same |
 | Magnet | GPIO 23 | same |
 | Comms | ESP-NOW ↔ gateway | ESP-NOW ↔ gateway |
 
@@ -237,10 +219,10 @@ Print MACs once with a small Wi‑Fi sketch (`WiFi.macAddress()`) and paste real
 
 ## 8. Bring-up order (electrical)
 
-1. Power **logic only** (gateway + one arm ESP32 on USB). Confirm serial JSON / ESP-NOW.
+1. Power **logic only** (gateway + one arm ESP32 on USB). Confirm the radio link with `python -m chess_robot status`.
 2. Add **servo PSU** with no load; check 5–6 V under a single servo.
-3. Wire **one joint** STEP/DIR (or PWM); command small moves.
-4. Wire homes, e-stop, magnet, pickup; verify FAULT on e-stop and pickup telemetry.
+3. Wire **one joint** signal + power; nudge it with `python -m chess_robot jog --joint shoulder --deg 5`.
+4. Wire e-stop, magnet, pickup; verify FAULT on e-stop (`status` reports it) and pickup telemetry after `magnet --state on`.
 5. Repeat for second arm; set MACs; full dual-arm keep-out test.
 
 ---

@@ -25,10 +25,12 @@ PC  --USB serial JSON-->  ESP32 Gateway  --ESP-NOW-->  WHITE arm ESP32
 
 1. Set unique Wi‑Fi MACs for gateway peer list and each arm (`GATEWAY_MAC`, `WHITE_ARM_MAC`, `BLACK_ARM_MAC`).
 2. Flash `esp32_arm_receiver.ino` once with `#define ARM_ID "WHITE"`, once with `"BLACK"`.
-3. Confirm stepper pins, home switches, e-stop, magnet driver, and pickup sensor match the sketch.
-4. Calibrate `J1_STEPS_PER_DEG` / `J2_STEPS_PER_DEG` / `J3_STEPS_PER_DEG` for your gearing and microstepping (or PWM mapping for MG995 servos).
+3. Confirm the three servo signal pins, e-stop, magnet driver, and pickup sensor match the sketch. **No homing switches** — MG995 servos are absolute-position, so there is no homing sweep.
+4. Calibrate the per-joint angle→microsecond map (`jointCal` `midUs` / `usPerDeg` / `dir` in the arm sketch) so a commanded logical joint angle lands on the true mechanical angle. The home pose in the sketch (`HOME_ANGLES`) must match `home_*` in `chess_robot/config.py`.
 5. Park poses and base positions in `chess_robot/config.py` must match the physical table (600×400 mm grid, 50 mm cells).
 6. Default arm geometry is a **planar 3R** with unequal links **200 / 160 / 180 mm**, bases **55 mm** off the outer edge of the first grid row, and **180°** joint windows per MG995-class servo.
+
+**Servos snap to `HOME_ANGLES` on power-up.** Give the arms a clear path to the home pose before energising the servo supply.
 
 ### Grid labels (mark these on the table)
 
@@ -56,6 +58,9 @@ Default in `RobotConfig`:
 - Fixed tool height (no Z lift axis).
 - Three rotary joints per arm (shoulder / elbow / wrist); wire waypoints are
   `[shoulder°, elbow°, wrist°, z_mm, speed, acceleration]`.
+- MG995 PWM servos are absolute-position. The arm firmware slews smoothly
+  toward each waypoint; `speed` is clamped to a safe deg/s window and
+  `acceleration` / `z_mm` are ignored by the servo build.
 - Electromagnet on at source center → planar XY path → magnet off at destination.
 - Weak board-cell magnets help snap steel-insert pucks to cell centers after release.
 - **Keep-out policy:** only one arm works the table at a time; the opposite arm is parked first
@@ -87,9 +92,16 @@ Vision verifies **occupancy**, not piece identity. The PC inventory remains auth
 2. `python -m unittest discover -v`
 3. Visual twin: `python -m chess_robot visual --random --paused`
 4. Mock stack: `python -m chess_robot simulate --random --games 1 --max-plies 20`
-5. Home both arms with no pieces on the board.
-6. Single transfer of one known puck with magnet and sensor supervised.
-7. Only then: `python -m chess_robot run --port COMx`
+5. Confirm the radio link: `python -m chess_robot status --port COMx` (both arms should report `DONE`).
+6. Home both arms with no pieces on the board: `python -m chess_robot home --port COMx`.
+7. Nudge one joint a few degrees and watch it: `python -m chess_robot jog --port COMx --arm white --joint shoulder --deg 5`.
+8. Magnet check: `python -m chess_robot magnet --port COMx --arm white --state on` then `--state off`.
+9. Single supervised transfer of one known puck: `python -m chess_robot transfer --port COMx --arm white --from board:e2 --to board:e4`.
+10. Only then: `python -m chess_robot run --port COMx`.
+
+Any bring-up command accepts `--mock` to dry-run the exact sequence with no hardware attached.
+
+> Bring-up commands use straight-line motion with no obstacle avoidance — keep the board clear of other pieces during single-transfer tests.
 
 See also:
 

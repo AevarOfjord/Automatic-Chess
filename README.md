@@ -118,6 +118,21 @@ windows, 55 mm base setback) and writes `runtime_data/geometry_optimization.json
 geometry is **200 / 160 / 180 mm** links. Certification covers the operational grid and each
 horizontal, vertical, and diagonal neighboring-grid route.
 
+## Hardware bring-up commands
+
+Supervised primitives for first power-on (each accepts `--port` and `--mock` to
+dry-run with no hardware). Actuators are **MG995 PWM servos**.
+
+```powershell
+.\venv\Scripts\python.exe -m chess_robot status                 # ping gateway + both arms
+.\venv\Scripts\python.exe -m chess_robot home                   # home + park both arms
+.\venv\Scripts\python.exe -m chess_robot jog --arm white --joint shoulder --deg 5
+.\venv\Scripts\python.exe -m chess_robot magnet --arm white --state on
+.\venv\Scripts\python.exe -m chess_robot transfer --arm white --from board:e2 --to board:e4
+```
+
+Follow the ordered checklist in [docs/hardware.md](docs/hardware.md) before `python -m chess_robot run`.
+
 ## Docs
 
 - [Architecture](docs/architecture.md)
