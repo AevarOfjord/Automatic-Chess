@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import chess
@@ -40,12 +41,30 @@ class Palette:
     CONSOLE_TEXT = (206, 214, 228)
     CONSOLE_MUTED = (120, 130, 148)
 
+    # Workspace tokens (board/pieces/arms) — same design language as above,
+    # so the left workspace and right control board read as one system.
+    STAGE_BG = (222, 225, 231)
+    BOARD_LIGHT = (238, 232, 219)
+    BOARD_DARK = (69, 90, 120)
+    RACK_WHITE = (198, 203, 214)
+    RACK_BLACK = (90, 94, 104)
+    PIECE_WHITE_FILL = (250, 247, 240)
+    PIECE_BLACK_FILL = (34, 38, 48)
+    PIECE_WHITE_OUTLINE = (82, 81, 78)
+    PIECE_BLACK_OUTLINE = (225, 224, 219)
+    HELD_GOLD = (235, 197, 95)
+    ARM_WHITE = (42, 120, 214)
+    ARM_BLACK = (196, 94, 94)
+    ARM_SHADOW = (30, 32, 40)
+
 
 class PygameRenderer:
     def __init__(self, simulator, viewport: Viewport | None = None) -> None:
         import pygame
+        import pygame.gfxdraw as gfxdraw
 
         self.pygame = pygame
+        self.gfxdraw = gfxdraw
         self.sim = simulator
         opts = simulator.options
         if viewport is None:
@@ -74,6 +93,11 @@ class PygameRenderer:
         self._col_scroll = {"moves": 0, "observe": 0, "controls": 0}
         self._col_max_scroll = {"moves": 0, "observe": 0, "controls": 0}
         self._col_rects: dict[str, object] = {}
+        self._piece_surface_cache: dict = {}
+        self._workspace_shadow = None
+        self._panel_shadow = None
+        self._piece_shadow = None
+        self._build_static_surfaces()
 
     def _create_display(self):
         """Open a resizable window by default; optional exclusive fullscreen."""
@@ -100,6 +124,7 @@ class PygameRenderer:
             self.viewport.resize(w, h)
         self.sim.options.fullscreen = self.fullscreen
         self.screen = self._create_display()
+        self._build_static_surfaces()
         self.sim.stats.message = "Fullscreen ON (F11)" if self.fullscreen else "Windowed mode (F11)"
 
     def toggle_fullscreen(self) -> None:
@@ -116,6 +141,7 @@ class PygameRenderer:
         self.screen = self.pygame.display.set_mode(
             (self.viewport.width, self.viewport.height), self.pygame.RESIZABLE
         )
+        self._build_static_surfaces()
 
     def run(self) -> None:
         pygame = self.pygame
@@ -236,8 +262,12 @@ class PygameRenderer:
             self.set_fullscreen(True)
 
     def draw(self) -> None:
-        # Light studio background
-        self.screen.fill((232, 236, 242))
+        # Soft neutral stage background
+        self.screen.fill(Palette.STAGE_BG)
+        if self._workspace_shadow is not None:
+            self.screen.blit(self._workspace_shadow, (0, 0))
+        if self._panel_shadow is not None:
+            self.screen.blit(self._panel_shadow, (0, 0))
         self._draw_workspace()
         self._draw_storage()
         self._draw_board()
@@ -248,30 +278,23 @@ class PygameRenderer:
 
     def _draw_workspace(self) -> None:
         pygame = self.pygame
-        ox, oy = self.sim.config.table_origin_x_mm, self.sim.config.table_origin_y_mm
-        table_x2, table_y2 = ox + self.sim.config.table_width_mm, oy + self.sim.config.table_height_mm
-        # The card must clear both arm bases (plus their circle+label), not
-        # just the table -- arms may be mounted well beyond the table edge.
-        pad = 45
-        base_xs = [self.sim.config.arm(a).base_x_mm for a in ArmId]
-        base_ys = [self.sim.config.arm(a).base_y_mm for a in ArmId]
-        board_rect = self._rect_from_world(
-            Point(min([ox, *base_xs]) - pad, min([oy, *base_ys]) - pad),
-            Point(max([table_x2, *base_xs]) + pad, max([table_y2, *base_ys]) + pad),
-        )
-        pygame.draw.rect(self.screen, (245, 247, 250), board_rect, border_radius=18)
-        pygame.draw.rect(self.screen, (180, 188, 200), board_rect, width=2, border_radius=18)
+        board_rect = self._workspace_card_rect()
+        pygame.draw.rect(self.screen, Palette.SURFACE, board_rect, border_radius=20)
+        pygame.draw.rect(self.screen, Palette.CARD_BORDER, board_rect, width=1, border_radius=20)
         for arm in ArmId:
             base = Point(self.sim.config.arm(arm).base_x_mm, self.sim.config.arm(arm).base_y_mm)
-            pygame.draw.circle(self.screen, (150, 160, 180), self.viewport.screen(base), self.viewport.length(18))
+            self._aa_circle(Palette.ACCENT_SOFT, self.viewport.screen(base), self.viewport.length(18))
+            self._aa_circle(
+                Palette.ACCENT, self.viewport.screen(base), self.viewport.length(18), width=2
+            )
             label = "White robot base" if arm is ArmId.WHITE else "Black robot base"
-            self._label(label, base, (70, 80, 100), dy=-28 if arm is ArmId.WHITE else 24)
+            self._label(label, base, Palette.INK_MUTED, dy=-28 if arm is ArmId.WHITE else 24)
 
     def _draw_board(self) -> None:
         pygame = self.pygame
         layout = self.sim.layout
         cfg = self.sim.config
-        colors = ((245, 232, 205), (125, 158, 118))
+        colors = (Palette.BOARD_LIGHT, Palette.BOARD_DARK)
         size = cfg.square_size_mm
         ox, oy = cfg.table_origin_x_mm, cfg.table_origin_y_mm
         chess_start_col = layout.chess_start_col
@@ -286,8 +309,7 @@ class PygameRenderer:
                 Point(gap_x0, oy),
                 Point(gap_x0 + cfg.separator_width_mm, oy + cfg.table_height_mm),
             )
-            pygame.draw.rect(self.screen, (210, 216, 226), gap)
-            pygame.draw.rect(self.screen, (170, 178, 192), gap, width=1)
+            pygame.draw.rect(self.screen, Palette.GRIDLINE, gap)
         for row_from_bottom in range(cfg.table_rows):
             for table_col in range(cfg.table_columns):
                 left = cfg.column_left_x_mm(table_col)
@@ -298,25 +320,15 @@ class PygameRenderer:
                     chess_file = table_col - chess_start_col
                     pygame.draw.rect(self.screen, colors[(row_from_bottom + chess_file) % 2], rect)
                 else:
-                    pygame.draw.rect(self.screen, (220, 224, 232), rect)
-                    pygame.draw.rect(self.screen, (190, 196, 208), rect, width=1)
+                    pygame.draw.rect(self.screen, Palette.SURFACE_ALT, rect)
+                    pygame.draw.rect(self.screen, Palette.CARD_BORDER, rect, width=1)
                 center = layout.cell_center(table_col, row_from_bottom)
-                pygame.draw.circle(
-                    self.screen,
-                    (160, 168, 180),
-                    self.viewport.screen(center),
-                    self.viewport.length(3),
-                )
+                self._aa_circle(Palette.INK_MUTED, self.viewport.screen(center), self.viewport.length(3))
                 if self.sim.options.show_cell_labels:
-                    label_color = (
-                        (80, 90, 105)
-                        if chess_start_col <= table_col < chess_end_col
-                        else (130, 110, 90)
-                    )
                     self._tiny(
                         cell_name,
                         Point(center.x_mm, world.y_mm + size - 10),
-                        label_color,
+                        Palette.INK_MUTED,
                     )
         table_outline = self._rect_from_world(
             Point(ox, oy),
@@ -329,8 +341,8 @@ class PygameRenderer:
                 oy + cfg.board_origin_y_mm + cfg.board_size_mm,
             ),
         )
-        pygame.draw.rect(self.screen, (60, 68, 82), table_outline, width=3)
-        pygame.draw.rect(self.screen, (40, 48, 60), chess_outline, width=3)
+        pygame.draw.rect(self.screen, Palette.INK_SECONDARY, table_outline, width=2, border_radius=4)
+        pygame.draw.rect(self.screen, Palette.INK, chess_outline, width=2, border_radius=4)
         # Chess file/rank marks only (no C# / R# table axis labels).
         for table_col in range(chess_start_col, chess_end_col):
             file_letter = chr(ord("a") + (table_col - chess_start_col))
@@ -338,7 +350,7 @@ class PygameRenderer:
             self._tiny(
                 file_letter,
                 Point(cx, oy + cfg.table_height_mm + 16),
-                (80, 90, 110),
+                Palette.INK_MUTED,
             )
         for row_from_bottom in range(cfg.board_squares):
             self._tiny(
@@ -347,23 +359,21 @@ class PygameRenderer:
                     ox + cfg.board_origin_x_mm + cfg.board_size_mm + 14,
                     oy + (row_from_bottom + 0.5) * size,
                 ),
-                (80, 90, 110),
+                Palette.INK_MUTED,
             )
 
     def _draw_storage(self) -> None:
-        pygame = self.pygame
         ox, oy = self.sim.config.table_origin_x_mm, self.sim.config.table_origin_y_mm
         for arm in ArmId:
+            rack_color = Palette.RACK_WHITE if arm is ArmId.WHITE else Palette.RACK_BLACK
             for index in range(16):
                 p = self.sim.layout.dead_slot(arm, index)
-                pygame.draw.circle(
-                    self.screen, (160, 120, 110), self.viewport.screen(p), self.viewport.length(14), width=2
-                )
+                self._aa_circle(rack_color, self.viewport.screen(p), self.viewport.length(14), width=2)
             rack_x = ox + 50 if arm is ArmId.WHITE else ox + 550
             self._label(
                 f"{arm.value.title()} rack W1–W16" if arm is ArmId.WHITE else "Black rack B1–B16",
                 Point(rack_x, oy + 430),
-                (90, 100, 120),
+                Palette.INK_MUTED,
                 dy=-8,
             )
 
@@ -375,9 +385,9 @@ class PygameRenderer:
             if len(path.points) < 2:
                 continue
             screen_points = [self.viewport.screen(point) for point in path.points]
-            pygame.draw.lines(self.screen, (200, 140, 20), False, screen_points, width=2)
+            pygame.draw.aalines(self.screen, Palette.WARNING, False, screen_points)
             for point in screen_points[1:-1]:
-                pygame.draw.circle(self.screen, (200, 140, 20), point, self.viewport.length(4))
+                self._aa_circle(Palette.WARNING, point, self.viewport.length(4))
 
     def _draw_pieces(self) -> None:
         held = {arm.held_token_id for arm in self.sim.arms.values() if arm.held_token_id}
@@ -413,45 +423,45 @@ class PygameRenderer:
         ghost: bool = False,
         held: bool = False,
     ) -> None:
-        pygame = self.pygame
         center = self.viewport.screen(point)
         radius = self.viewport.length(16 if not ghost else 11)
-        fill = (245, 241, 230) if color is ArmId.WHITE else (34, 35, 39)
-        outline = (235, 197, 95) if held else ((50, 55, 65) if color is ArmId.WHITE else (220, 220, 220))
-        if ghost:
-            fill = tuple(max(0, c - 25) for c in fill)
-        pygame.draw.circle(self.screen, fill, center, radius)
-        pygame.draw.circle(self.screen, outline, center, radius, width=2)
-        text_color = (18, 20, 24) if color is ArmId.WHITE else (245, 245, 245)
+        if self._piece_shadow is not None:
+            shadow = self._piece_shadow
+            self.screen.blit(shadow, (center[0] - shadow.get_width() // 2, center[1] - shadow.get_height() // 2))
+        if color is ArmId.WHITE:
+            fill, outline = Palette.PIECE_WHITE_FILL, Palette.PIECE_WHITE_OUTLINE
+        else:
+            fill, outline = Palette.PIECE_BLACK_FILL, Palette.PIECE_BLACK_OUTLINE
+        disc = self._get_piece_surface(radius, fill, outline, ghost=ghost, held=held)
+        self.screen.blit(disc, (center[0] - disc.get_width() // 2, center[1] - disc.get_height() // 2))
+        text_color = Palette.PIECE_BLACK_FILL if color is ArmId.WHITE else (245, 245, 245)
         symbol = PIECE_SYMBOLS.get(piece_type, piece_type)
         surface = self.piece_font.render(symbol, True, text_color)
         rect = surface.get_rect(center=center)
         self.screen.blit(surface, rect)
 
+    @staticmethod
+    def _arm_color(arm_id: ArmId) -> tuple[int, int, int]:
+        return Palette.ARM_WHITE if arm_id is ArmId.WHITE else Palette.ARM_BLACK
+
     def _draw_arms(self) -> None:
-        pygame = self.pygame
-        arm_colors = {ArmId.WHITE: (96, 167, 255), ArmId.BLACK: (255, 109, 109)}
         for arm_id, arm in self.sim.arms.items():
             base, elbow, wrist, tool = self.sim.forward_kinematics(arm_id, arm.pose)
-            color = arm_colors[arm_id]
+            color = self._arm_color(arm_id)
             points = [
                 self.viewport.screen(base),
                 self.viewport.screen(elbow),
                 self.viewport.screen(wrist),
                 self.viewport.screen(tool),
             ]
-            pygame.draw.lines(self.screen, (18, 20, 24), False, points, width=12)
-            pygame.draw.lines(self.screen, color, False, points, width=7)
+            self._aa_polyline_thick(Palette.ARM_SHADOW, points, 10)
+            self._aa_polyline_thick(color, points, 7)
             joint_r = self.viewport.length(9)
-            pygame.draw.circle(self.screen, color, points[1], joint_r)
-            pygame.draw.circle(self.screen, color, points[2], joint_r)
-            pygame.draw.circle(
-                self.screen, (245, 221, 111), self.viewport.screen(arm.tool), self.viewport.length(9)
-            )
-            magnet_color = (88, 255, 180) if arm.magnet_on else (145, 150, 165)
-            pygame.draw.circle(
-                self.screen, magnet_color, self.viewport.screen(arm.tool), self.viewport.length(5)
-            )
+            self._aa_circle(color, points[1], joint_r)
+            self._aa_circle(color, points[2], joint_r)
+            self._aa_circle(Palette.HELD_GOLD, self.viewport.screen(arm.tool), self.viewport.length(9))
+            magnet_color = Palette.GOOD if arm.magnet_on else Palette.INK_MUTED
+            self._aa_circle(magnet_color, self.viewport.screen(arm.tool), self.viewport.length(5))
 
     def _draw_panel(self) -> None:
         """Right-side panel: header + three columns (moves | observe | controls)."""
@@ -459,11 +469,7 @@ class PygameRenderer:
         stats = self.sim.stats
         opts = self.sim.options
         pad = 12
-        width = self.viewport.dashboard_width - 12
-        x0 = self.viewport.width - self.viewport.dashboard_width + 4
-        y0 = 10
-        height = self.viewport.height - 20
-        panel = pygame.Rect(x0, y0, width, height)
+        panel = self._panel_card_rect()
         self._panel_rect = panel
         pal = Palette
         pygame.draw.rect(self.screen, pal.SURFACE, panel, border_radius=14)
@@ -622,9 +628,8 @@ class PygameRenderer:
         y = self._section_rule(x, y, inner_w)
 
         y = self._section_title(x, y, "ARM STATE")
-        arm_colors = {ArmId.WHITE: (96, 167, 255), ArmId.BLACK: (255, 109, 109)}
         for arm_id in ArmId:
-            y = self._arm_state_card(x, y, inner_w, arm_id, self.sim.arms[arm_id], arm_colors[arm_id])
+            y = self._arm_state_card(x, y, inner_w, arm_id, self.sim.arms[arm_id], self._arm_color(arm_id))
         y = self._section_rule(x, y, inner_w)
 
         y = self._section_title(x, y, "STATUS")
@@ -975,13 +980,6 @@ class PygameRenderer:
             )
         return y + h + 4
 
-    def _draw_badge(self, x: int, y: int, text: str, color: tuple[int, int, int]) -> None:
-        pygame = self.pygame
-        surface = self.small.render(text, True, (255, 255, 255))
-        rect = pygame.Rect(x, y, surface.get_width() + 14, surface.get_height() + 6)
-        pygame.draw.rect(self.screen, color, rect, border_radius=8)
-        self.screen.blit(surface, (x + 7, y + 3))
-
     def _draw_move_history(self, x: int, y: int, width: int, moves: list[str]) -> int:
         """Draw every played ply as ``N. Side: A1 to B2``."""
         pygame = self.pygame
@@ -1052,3 +1050,131 @@ class PygameRenderer:
         if current:
             lines.append(current)
         return lines
+
+    # —— Antialiased primitives (gfxdraw-backed) ——
+
+    def _aa_circle(self, color, center: tuple[float, float], radius: float, *, width: int = 0) -> None:
+        """Filled AA disc (width=0) or an AA ring built from stacked outlines."""
+        gfxdraw = self.gfxdraw
+        cx, cy = round(center[0]), round(center[1])
+        r = max(1, round(radius))
+        if width <= 0:
+            gfxdraw.filled_circle(self.screen, cx, cy, r, color)
+            gfxdraw.aacircle(self.screen, cx, cy, r, color)
+        else:
+            for ring_r in range(max(1, r - width + 1), r + 1):
+                gfxdraw.aacircle(self.screen, cx, cy, ring_r, color)
+
+    def _aa_line_thick(self, color, p1: tuple[float, float], p2: tuple[float, float], width: float) -> None:
+        """A filled capsule (rectangle + round end caps) approximating a thick AA line."""
+        gfxdraw = self.gfxdraw
+        x1, y1 = p1
+        x2, y2 = p2
+        length = math.hypot(x2 - x1, y2 - y1)
+        half_w = max(0.5, width / 2)
+        if length < 1e-6:
+            self._aa_circle(color, p1, half_w)
+            return
+        nx, ny = -(y2 - y1) / length, (x2 - x1) / length
+        ox, oy = nx * half_w, ny * half_w
+        poly = [
+            (x1 + ox, y1 + oy),
+            (x2 + ox, y2 + oy),
+            (x2 - ox, y2 - oy),
+            (x1 - ox, y1 - oy),
+        ]
+        gfxdraw.filled_polygon(self.screen, poly, color)
+        gfxdraw.aapolygon(self.screen, poly, color)
+        self._aa_circle(color, p1, half_w)
+        self._aa_circle(color, p2, half_w)
+
+    def _aa_polyline_thick(self, color, points: list[tuple[float, float]], width: float) -> None:
+        for p1, p2 in zip(points, points[1:]):
+            self._aa_line_thick(color, p1, p2, width)
+
+    # —— Cached shadow / piece surfaces ——
+
+    def _workspace_card_rect(self):
+        """World-space bounds of the left workspace card (clears both arm bases)."""
+        ox, oy = self.sim.config.table_origin_x_mm, self.sim.config.table_origin_y_mm
+        table_x2 = ox + self.sim.config.table_width_mm
+        table_y2 = oy + self.sim.config.table_height_mm
+        pad = 45
+        base_xs = [self.sim.config.arm(a).base_x_mm for a in ArmId]
+        base_ys = [self.sim.config.arm(a).base_y_mm for a in ArmId]
+        return self._rect_from_world(
+            Point(min([ox, *base_xs]) - pad, min([oy, *base_ys]) - pad),
+            Point(max([table_x2, *base_xs]) + pad, max([table_y2, *base_ys]) + pad),
+        )
+
+    def _panel_card_rect(self):
+        """Screen-space bounds of the right control-board panel."""
+        pygame = self.pygame
+        width = self.viewport.dashboard_width - 12
+        x0 = self.viewport.width - self.viewport.dashboard_width + 4
+        y0 = 10
+        height = self.viewport.height - 20
+        return pygame.Rect(x0, y0, width, height)
+
+    def _draw_soft_shadow(self, surface, rect, radius: int) -> None:
+        """Layer several offset, low-alpha rounded rects to fake a soft drop shadow."""
+        pygame = self.pygame
+        layers = 5
+        base_alpha = 10
+        for i in range(layers, 0, -1):
+            pad = i * 3
+            alpha = base_alpha + (layers - i) * 4
+            shadow_rect = rect.inflate(pad * 2, pad * 2)
+            shadow_rect.x += 2
+            shadow_rect.y += 4
+            pygame.draw.rect(
+                surface, (10, 14, 22, alpha), shadow_rect, border_radius=radius + pad // 2
+            )
+
+    def _build_static_surfaces(self) -> None:
+        """(Re)build resize-dependent cached surfaces: card shadows + piece shadow."""
+        pygame = self.pygame
+        w, h = self.viewport.width, self.viewport.height
+        self._workspace_shadow = pygame.Surface((w, h), pygame.SRCALPHA)
+        self._draw_soft_shadow(self._workspace_shadow, self._workspace_card_rect(), 20)
+        self._panel_shadow = pygame.Surface((w, h), pygame.SRCALPHA)
+        self._draw_soft_shadow(self._panel_shadow, self._panel_card_rect(), 14)
+
+        shadow_r = self.viewport.length(20)
+        size = shadow_r * 2 + 12
+        self._piece_shadow = pygame.Surface((size, size), pygame.SRCALPHA)
+        cx = cy = size // 2
+        for i, alpha in enumerate((14, 22, 34)):
+            r = shadow_r - i * 2
+            if r > 0:
+                self.gfxdraw.filled_circle(self._piece_shadow, cx, cy, r, (10, 14, 22, alpha))
+        self._piece_surface_cache.clear()
+
+    def _get_piece_surface(self, radius: int, fill, outline, *, ghost: bool, held: bool):
+        """A cached gradient-look disc: flat fill + soft sheen + AA outline ring."""
+        key = (radius, fill, outline, ghost, held)
+        cached = self._piece_surface_cache.get(key)
+        if cached is not None:
+            return cached
+        gfxdraw = self.gfxdraw
+        size = radius * 2 + 4
+        surface = self.pygame.Surface((size, size), self.pygame.SRCALPHA)
+        center = size // 2
+        alpha = 190 if ghost else 255
+        gfxdraw.filled_circle(surface, center, center, radius, (*fill, alpha))
+        gfxdraw.aacircle(surface, center, center, radius, (*fill, alpha))
+        sheen_r = max(2, radius // 2)
+        sheen_offset = radius // 3
+        gfxdraw.filled_circle(
+            surface,
+            center - sheen_offset,
+            center - sheen_offset,
+            sheen_r,
+            (255, 255, 255, 20 if ghost else 40),
+        )
+        ring_color = Palette.HELD_GOLD if held else outline
+        ring_width = 2 if held else 1
+        for ring_r in range(max(1, radius - ring_width + 1), radius + 1):
+            gfxdraw.aacircle(surface, center, center, ring_r, (*ring_color, alpha))
+        self._piece_surface_cache[key] = surface
+        return surface
