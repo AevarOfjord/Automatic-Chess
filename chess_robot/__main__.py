@@ -88,6 +88,118 @@ def run_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _arms_from_arg(value: str) -> list["ArmId"]:
+    from .config import ArmId
+
+    if value == "both":
+        return [ArmId.WHITE, ArmId.BLACK]
+    return [ArmId(value.upper())]
+
+
+def hardware_from_args(args: argparse.Namespace) -> "DualArmHardware":
+    """Build a bare hardware controller (no vision/engine) for bring-up commands."""
+    import dataclasses as _dc
+
+    from .hardware import DualArmHardware
+
+    config = RobotConfig.from_env()
+    if getattr(args, "port", None):
+        config = _dc.replace(config, serial_port=args.port)
+    return DualArmHardware(config=config, use_mock=getattr(args, "mock", False))
+
+
+def home_command(args: argparse.Namespace) -> int:
+    hardware = hardware_from_args(args)
+    try:
+        for arm in _arms_from_arg(args.arm):
+            hardware.home(arm)
+            hardware.park(arm)
+            print(f"{arm.value}: homed and parked")
+    finally:
+        hardware.close()
+    return 0
+
+
+def park_command(args: argparse.Namespace) -> int:
+    hardware = hardware_from_args(args)
+    try:
+        for arm in _arms_from_arg(args.arm):
+            hardware.park(arm)
+            print(f"{arm.value}: parked")
+    finally:
+        hardware.close()
+    return 0
+
+
+def status_command(args: argparse.Namespace) -> int:
+    from .hardware import MotionFault
+
+    hardware = hardware_from_args(args)
+    all_ok = True
+    try:
+        for arm in _arms_from_arg(args.arm):
+            try:
+                response = hardware.status(arm)
+                pickup = response.telemetry.get("pickup")
+                extra = f"  pickup={pickup}" if pickup is not None else ""
+                detail = f"  {response.detail}" if response.detail else ""
+                print(f"{arm.value}: {response.status.value}{extra}{detail}")
+            except MotionFault as exc:
+                all_ok = False
+                print(f"{arm.value}: NO RESPONSE ({exc})")
+    finally:
+        hardware.close()
+    return 0 if all_ok else 1
+
+
+def jog_command(args: argparse.Namespace) -> int:
+    from .hardware import MotionFault
+
+    hardware = hardware_from_args(args)
+    arm = _arms_from_arg(args.arm)[0]
+    try:
+        pose = hardware.jog_joint(arm, args.joint, args.deg)
+        print(
+            f"{arm.value}: {args.joint} {args.deg:+.1f}° -> "
+            f"shoulder {pose.shoulder_deg:.1f}°, elbow {pose.elbow_deg:.1f}°, "
+            f"wrist {pose.wrist_deg:.1f}°"
+        )
+    except (MotionFault, ValueError) as exc:
+        print(f"{arm.value}: jog refused ({exc})")
+        return 1
+    finally:
+        hardware.close()
+    return 0
+
+
+def magnet_command(args: argparse.Namespace) -> int:
+    hardware = hardware_from_args(args)
+    on = args.state == "on"
+    try:
+        for arm in _arms_from_arg(args.arm):
+            response = hardware.set_magnet(arm, on=on)
+            print(f"{arm.value}: magnet {'ON' if on else 'OFF'} ({response.status.value})")
+    finally:
+        hardware.close()
+    return 0
+
+
+def transfer_command(args: argparse.Namespace) -> int:
+    from .hardware import MotionFault
+
+    hardware = hardware_from_args(args)
+    arm = _arms_from_arg(args.arm)[0]
+    try:
+        hardware.transfer(arm, args.source, args.destination)
+        print(f"{arm.value}: transferred {args.source} -> {args.destination}")
+    except MotionFault as exc:
+        print(f"{arm.value}: transfer faulted ({exc})")
+        return 1
+    finally:
+        hardware.close()
+    return 0
+
+
 def calibrate_command(args: argparse.Namespace) -> int:
     vision = BoardVision(camera_index=args.camera, use_mock=False)
     try:
@@ -224,6 +336,58 @@ def build_parser() -> argparse.ArgumentParser:
     calibrate_parser.add_argument("--camera", type=int, default=0)
     calibrate_parser.add_argument("--output", default="runtime_data/camera_calibration.npz")
     calibrate_parser.set_defaults(function=calibrate_command)
+
+    # —— Supervised hardware bring-up commands ——
+    def add_hardware_args(sub: argparse.ArgumentParser, *, arm_default: str = "both") -> None:
+        sub.add_argument("--port", default=default_port, help="gateway serial port")
+        sub.add_argument(
+            "--mock",
+            action="store_true",
+            help="use the mock transport (dry-run the command with no hardware)",
+        )
+        sub.add_argument(
+            "--arm",
+            choices=["white", "black", "both"],
+            default=arm_default,
+            help=f"which arm(s) to target (default: {arm_default})",
+        )
+
+    status_parser = subparsers.add_parser(
+        "status", help="ping the gateway and arm ESP32s (connectivity check)"
+    )
+    add_hardware_args(status_parser)
+    status_parser.set_defaults(function=status_command)
+
+    home_parser = subparsers.add_parser("home", help="home then park one or both arms")
+    add_hardware_args(home_parser)
+    home_parser.set_defaults(function=home_command)
+
+    park_parser = subparsers.add_parser("park", help="park one or both arms in the outside L-rest")
+    add_hardware_args(park_parser)
+    park_parser.set_defaults(function=park_command)
+
+    jog_parser = subparsers.add_parser("jog", help="nudge a single joint (supervised)")
+    add_hardware_args(jog_parser, arm_default="white")
+    jog_parser.add_argument("--joint", choices=["shoulder", "elbow", "wrist"], required=True)
+    jog_parser.add_argument("--deg", type=float, required=True, help="signed angle delta in degrees")
+    jog_parser.set_defaults(function=jog_command)
+
+    magnet_parser = subparsers.add_parser("magnet", help="toggle the electromagnet (supervised)")
+    add_hardware_args(magnet_parser, arm_default="white")
+    magnet_parser.add_argument("--state", choices=["on", "off"], required=True)
+    magnet_parser.set_defaults(function=magnet_command)
+
+    transfer_parser = subparsers.add_parser(
+        "transfer", help="run one supervised straight-line piece transfer"
+    )
+    add_hardware_args(transfer_parser, arm_default="white")
+    transfer_parser.add_argument(
+        "--from", dest="source", required=True, help="source location, e.g. board:e2 or dead:WHITE:0"
+    )
+    transfer_parser.add_argument(
+        "--to", dest="destination", required=True, help="destination location, e.g. board:e4"
+    )
+    transfer_parser.set_defaults(function=transfer_command)
     return parser
 
 

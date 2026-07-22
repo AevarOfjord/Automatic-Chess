@@ -57,7 +57,13 @@ class MockGatewayTransport(GatewayTransport):
 
 
 class SerialGatewayTransport(GatewayTransport):
-    def __init__(self, port: str, baudrate: int = 115200) -> None:
+    def __init__(self, port: str, baudrate: int = 115200, serial_obj: object | None = None) -> None:
+        # ``serial_obj`` lets tests inject a fake port (a duck-typed object with
+        # write/readline/close); production opens the real device and lets the
+        # ESP32 finish its USB reset before the input buffer is flushed.
+        if serial_obj is not None:
+            self.serial = serial_obj
+            return
         log.info("opening serial gateway %s @ %s", port, baudrate)
         self.serial = serial.Serial(port, baudrate, timeout=0.2)
         time.sleep(2.0)

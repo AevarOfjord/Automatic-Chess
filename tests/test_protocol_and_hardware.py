@@ -14,7 +14,13 @@ from chess_robot.protocol import (
     CommandJournal,
     Status,
 )
-from chess_robot.transport import MockGatewayTransport
+from chess_robot.geometry import JointPose
+from chess_robot.transport import MockGatewayTransport, SerialGatewayTransport
+
+
+def _hardware(transport: MockGatewayTransport, tmp: str) -> DualArmHardware:
+    config = RobotConfig(journal_path=Path(tmp) / "j.jsonl")
+    return DualArmHardware(config=config, transport=transport, use_mock=True)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -115,6 +121,92 @@ class HardwareMockTests(unittest.TestCase):
                     {"on": False, "settle_ms": 500},
                 ],
             )
+
+
+class FakeSerial:
+    """Minimal duck-typed pyserial stand-in for transport tests."""
+
+    def __init__(self, responses: list[bytes]) -> None:
+        self.written: list[bytes] = []
+        self._responses = list(responses)
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        self.written.append(bytes(data))
+        return len(data)
+
+    def readline(self) -> bytes:
+        return self._responses.pop(0) if self._responses else b""
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class SerialTransportTests(unittest.TestCase):
+    def test_matches_command_id_and_ignores_noise(self) -> None:
+        command = ArmCommand(ArmId.WHITE, Action.STATUS)
+        noise = b"boot banner, not json\n"
+        stale = ArmResponse("deadbeef1234", ArmId.WHITE, Status.DONE).to_wire()
+        match = ArmResponse(
+            command.command_id, ArmId.WHITE, Status.DONE, telemetry={"pickup": True}
+        ).to_wire()
+        fake = FakeSerial([noise, stale, match])
+        transport = SerialGatewayTransport("COMX", serial_obj=fake)
+        response = transport.exchange(command, timeout_s=1.0)
+        self.assertIs(response.status, Status.DONE)
+        self.assertEqual(response.command_id, command.command_id)
+        self.assertTrue(response.telemetry["pickup"])
+        self.assertEqual(fake.written[0], command.to_wire())
+
+    def test_timeout_becomes_fault(self) -> None:
+        command = ArmCommand(ArmId.WHITE, Action.STATUS)
+        transport = SerialGatewayTransport("COMX", serial_obj=FakeSerial([]))
+        response = transport.exchange(command, timeout_s=0.05)
+        self.assertIs(response.status, Status.FAULT)
+        self.assertIn("timeout", response.detail)
+
+
+class BringUpPrimitiveTests(unittest.TestCase):
+    def test_status_sends_status_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = MockGatewayTransport()
+            hardware = _hardware(transport, tmp)
+            response = hardware.status(ArmId.WHITE)
+            self.assertIs(response.status, Status.DONE)
+            self.assertTrue(any(c.action is Action.STATUS for c in transport.commands))
+
+    def test_set_magnet_uses_configured_settle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = MockGatewayTransport()
+            hardware = _hardware(transport, tmp)
+            hardware.set_magnet(ArmId.WHITE, on=True)
+            magnet = [c for c in transport.commands if c.action is Action.SET_MAGNET]
+            self.assertEqual(magnet[-1].payload, {"on": True, "settle_ms": 500})
+
+    def test_jog_joint_moves_within_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = MockGatewayTransport()
+            hardware = _hardware(transport, tmp)
+            pose = hardware.jog_joint(ArmId.WHITE, "shoulder", 10.0)
+            self.assertAlmostEqual(pose.shoulder_deg, -35.0)
+            self.assertTrue(
+                any(c.action is Action.EXECUTE_TRAJECTORY for c in transport.commands)
+            )
+
+    def test_jog_joint_rejects_out_of_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hardware = _hardware(MockGatewayTransport(), tmp)
+            with self.assertRaises(MotionFault):
+                hardware.jog_joint(ArmId.WHITE, "shoulder", 200.0)
+
+    def test_move_to_pose_parks_opposite_arm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transport = MockGatewayTransport()
+            hardware = _hardware(transport, tmp)
+            hardware.parked[ArmId.BLACK] = False
+            hardware.last_pose[ArmId.BLACK] = hardware._pose(ArmId.BLACK, "board:e7")
+            hardware.move_to_pose(ArmId.WHITE, JointPose(-40.0, 10.0, 90.0))
+            self.assertTrue(hardware.parked[ArmId.BLACK])
 
 
 class GameFaultTests(unittest.TestCase):

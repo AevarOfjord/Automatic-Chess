@@ -216,6 +216,58 @@ class DualArmHardware:
                 pass
             self.parked[arm] = False
 
+    def status(self, arm: ArmId) -> ArmResponse:
+        """Round-trip a STATUS request; raises MotionFault if the arm is silent.
+
+        Used by the ``status``/bring-up CLI to confirm the gateway and arm
+        ESP32s are actually responding before any motion is trusted.
+        """
+        return self._send(ArmCommand(arm, Action.STATUS))
+
+    def set_magnet(self, arm: ArmId, *, on: bool, settle_s: float | None = None) -> ArmResponse:
+        """Supervised magnet toggle for bring-up (defaults to configured settle)."""
+        if settle_s is None:
+            settle_s = (
+                self.config.magnet_pickup_settle_s if on else self.config.magnet_release_settle_s
+            )
+        return self._set_magnet(arm, on=on, settle_s=settle_s)
+
+    def _check_joint_limits(self, arm: ArmId, pose: JointPose) -> None:
+        cfg = self.config.arm(arm)
+        for value, limits, name in (
+            (pose.shoulder_deg, cfg.shoulder_limits_deg, "shoulder"),
+            (pose.elbow_deg, cfg.elbow_limits_deg, "elbow"),
+            (pose.wrist_deg, cfg.wrist_limits_deg, "wrist"),
+        ):
+            if not limits[0] <= value <= limits[1]:
+                raise MotionFault(
+                    f"{arm.value} {name} target {value:.1f}° outside limit "
+                    f"[{limits[0]:.0f}, {limits[1]:.0f}]"
+                )
+
+    def move_to_pose(self, arm: ArmId, pose: JointPose) -> None:
+        """Move one arm to an explicit joint pose (keep-out: park the other first)."""
+        cfg = self.config.arm(arm)
+        self._check_joint_limits(arm, pose)
+        with self.workspace_lock:
+            self.ensure_parked(arm.opposite)
+            self._trajectory(arm, [(pose, cfg.fixed_tool_z_mm)])
+
+    def jog_joint(self, arm: ArmId, joint: str, delta_deg: float) -> JointPose:
+        """Nudge a single joint by ``delta_deg`` from the last commanded pose."""
+        base = self.last_pose[arm] or self._home_pose(arm)
+        angles = {
+            "shoulder": base.shoulder_deg,
+            "elbow": base.elbow_deg,
+            "wrist": base.wrist_deg,
+        }
+        if joint not in angles:
+            raise ValueError(f"joint must be shoulder/elbow/wrist, got {joint!r}")
+        angles[joint] += delta_deg
+        target = JointPose(angles["shoulder"], angles["elbow"], angles["wrist"])
+        self.move_to_pose(arm, target)
+        return target
+
     def _reachable_carry_poses(
         self, arm: ArmId, path_points: list[Point], z_mm: float
     ) -> list[tuple[JointPose, float]]:
