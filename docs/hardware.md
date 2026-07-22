@@ -91,4 +91,8 @@ Vision verifies **occupancy**, not piece identity. The PC inventory remains auth
 6. Single transfer of one known puck with magnet and sensor supervised.
 7. Only then: `python -m chess_robot run --port COMx`
 
-See also [build_dimensions.md](build_dimensions.md) for the full physical cut list and [fault_recovery.md](fault_recovery.md).
+See also:
+
+- [Wiring diagram](wiring.md) — power, ESP-NOW, GPIO pin map
+- [Build dimensions](build_dimensions.md) — physical cut list
+- [Fault recovery](fault_recovery.md)

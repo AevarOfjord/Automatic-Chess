@@ -122,6 +122,7 @@ horizontal, vertical, and diagonal neighboring-grid route.
 
 - [Architecture](docs/architecture.md)
 - [Hardware bring-up](docs/hardware.md)
+- [Wiring diagram](docs/wiring.md)
 - [Build dimensions](docs/build_dimensions.md)
 - [Fault recovery](docs/fault_recovery.md)
 
@@ -130,7 +131,3 @@ Environment overrides: `CHESS_ROBOT_PORT`, `CHESS_ROBOT_BAUD`, `CHESS_ROBOT_TIME
 Verbose logs: `python -m chess_robot -v simulate --random --seed 1 --max-plies 8`
 
 The first hardware milestone should wait until the visual simulator and planner tests are boringly reliable.
-
-## Legacy root scripts
-
-Thin compatibility wrappers (`game_manager.py`, `robot_controller.py`, `vision_validator.py`, `visual_simulation.py`) remain for older imports. Prefer `python -m chess_robot …` for new work.
