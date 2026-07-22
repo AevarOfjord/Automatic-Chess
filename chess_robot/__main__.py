@@ -4,7 +4,7 @@ import argparse
 import dataclasses
 from pathlib import Path
 
-from .config import RobotConfig
+from .config import ArmId, RobotConfig
 from .game import (
     DEFAULT_BLACK_ELO,
     DEFAULT_BLACK_SKILL,
@@ -15,6 +15,7 @@ from .game import (
 )
 from .geometry import unreachable, validate_layout
 from .geometry_optimizer import optimize_geometry, write_report
+from .hardware import DualArmHardware, MotionFault
 from .logging_config import configure_logging
 from .vision import BoardVision
 from .visual_simulator import run_visual_simulator
@@ -61,8 +62,6 @@ def manager_from_args(args: argparse.Namespace, mock: bool) -> GameManager:
 
 
 def simulate_command(args: argparse.Namespace) -> int:
-    from .hardware import MotionFault
-
     manager = manager_from_args(args, mock=True)
     manager.initialize()
     try:
@@ -88,23 +87,17 @@ def run_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def _arms_from_arg(value: str) -> list["ArmId"]:
-    from .config import ArmId
-
+def _arms_from_arg(value: str) -> list[ArmId]:
     if value == "both":
         return [ArmId.WHITE, ArmId.BLACK]
     return [ArmId(value.upper())]
 
 
-def hardware_from_args(args: argparse.Namespace) -> "DualArmHardware":
+def hardware_from_args(args: argparse.Namespace) -> DualArmHardware:
     """Build a bare hardware controller (no vision/engine) for bring-up commands."""
-    import dataclasses as _dc
-
-    from .hardware import DualArmHardware
-
     config = RobotConfig.from_env()
     if getattr(args, "port", None):
-        config = _dc.replace(config, serial_port=args.port)
+        config = dataclasses.replace(config, serial_port=args.port)
     return DualArmHardware(config=config, use_mock=getattr(args, "mock", False))
 
 
@@ -132,8 +125,6 @@ def park_command(args: argparse.Namespace) -> int:
 
 
 def status_command(args: argparse.Namespace) -> int:
-    from .hardware import MotionFault
-
     hardware = hardware_from_args(args)
     all_ok = True
     try:
@@ -153,8 +144,6 @@ def status_command(args: argparse.Namespace) -> int:
 
 
 def jog_command(args: argparse.Namespace) -> int:
-    from .hardware import MotionFault
-
     hardware = hardware_from_args(args)
     arm = _arms_from_arg(args.arm)[0]
     try:
@@ -185,8 +174,6 @@ def magnet_command(args: argparse.Namespace) -> int:
 
 
 def transfer_command(args: argparse.Namespace) -> int:
-    from .hardware import MotionFault
-
     hardware = hardware_from_args(args)
     arm = _arms_from_arg(args.arm)[0]
     try:
